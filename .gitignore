@@ -1,0 +1,102 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+ENV/
+env/
+.venv/
+
+# 环境变量 (包含API密钥)
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# 项目数据 (生成的内容)
+data/projects/*/characters/
+data/projects/*/images/
+data/projects/*/videos/
+data/projects/*/audio/
+data/projects/*/output/
+data/projects/*/temp/
+data/projects/*/*.json
+!data/projects/.gitkeep
+
+# 模型文件 (太大)
+models/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.onnx
+
+# 外部服务目录
+ComfyUI/
+CosyVoice/
+
+# 临时文件
+temp/
+tmp/
+*.tmp
+*.temp
+*.bak
+
+# 日志
+logs/
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# 其他
+*.local

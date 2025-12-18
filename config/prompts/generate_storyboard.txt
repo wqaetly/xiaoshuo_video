@@ -1,0 +1,61 @@
+你是专业的动画分镜师。请将以下小说章节转换为分镜脚本。
+
+小说章节 (第{chapter_num}章):
+{chapter_text}
+
+已知角色信息:
+{characters_json}
+
+要求:
+1. 每个场景时长控制在3-6秒
+2. 场景描述要具体、详细，适合AI图像生成
+3. 镜头类型选择: static(静止), slow_zoom_in(缓慢推进), slow_zoom_out(缓慢拉远), pan_left(左移), pan_right(右移), tilt_up(上移), tilt_down(下移)
+4. 画面类型: wide_shot(远景), medium_shot(中景), close_up(特写), extreme_close_up(大特写)
+5. 对话和旁白要自然流畅
+6. 情感标记要准确: epic(史诗), calm(平静), tense(紧张), sad(悲伤), happy(欢快), angry(愤怒), determined(坚定)
+
+输出JSON数组格式:
+```json
+[
+  {
+    "duration": 5.0,
+    "visual": {
+      "description": "场景的详细视觉描述，包括环境、人物动作、光影等",
+      "style_tags": ["风格标签1", "风格标签2"],
+      "characters_in_scene": ["char_001"],
+      "camera": {
+        "type": "slow_zoom_in",
+        "start_frame": "wide_shot",
+        "end_frame": "medium_shot"
+      }
+    },
+    "audio": {
+      "narration": {
+        "text": "旁白文本（如果有）",
+        "emotion": "epic"
+      },
+      "dialogues": [
+        {
+          "character_id": "char_001",
+          "text": "对话内容",
+          "emotion": "determined"
+        }
+      ],
+      "bgm": "epic_intro",
+      "sfx": ["wind_mountain"]
+    },
+    "subtitle": {
+      "text": "显示的字幕文本",
+      "style": "narration",
+      "character": null
+    }
+  }
+]
+```
+
+注意:
+- 如果场景没有旁白，narration设为null
+- 如果没有对话，dialogues设为空数组[]
+- subtitle.style为"narration"或"dialogue"
+- 对话时subtitle.character为说话角色名
+- 确保生成的场景能够连贯地讲述故事

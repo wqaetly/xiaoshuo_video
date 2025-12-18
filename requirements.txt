@@ -1,0 +1,31 @@
+# 核心依赖
+pyyaml>=6.0
+pydantic>=2.0
+requests>=2.31
+httpx>=0.25
+aiohttp>=3.9
+
+# 图像处理
+pillow>=10.0
+opencv-python>=4.8
+
+# 视频处理
+moviepy>=1.0.3
+ffmpeg-python>=0.2.0
+
+# LLM
+openai>=1.0
+
+# 工具
+tqdm>=4.66
+rich>=13.0
+loguru>=0.7
+
+# Web UI
+gradio>=4.0
+
+# 环境变量
+python-dotenv>=1.0
+
+# 异步
+asyncio-throttle>=1.0

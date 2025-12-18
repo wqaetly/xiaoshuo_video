@@ -1,0 +1,37 @@
+# 全局设置
+app:
+  name: "小说转视频"
+  version: "1.0.0"
+  debug: true
+
+# 默认视频参数
+video:
+  resolution: "1280x720"
+  fps: 24
+  style: "anime"  # anime / realistic / illustration
+
+# 本地服务配置
+local:
+  ollama_url: "http://localhost:11434"
+  ollama_model: "qwen2.5:14b"
+  comfyui_url: "http://localhost:8188"
+  cosyvoice_url: "http://localhost:9880"
+
+# API配置
+api:
+  video_provider: "jimeng"  # jimeng / kling
+  use_idle_time: true  # 使用闲时折扣
+
+# 生成参数
+generation:
+  scene_duration_min: 3.0
+  scene_duration_max: 6.0
+  max_concurrent_tasks: 3
+  retry_count: 3
+  retry_delay: 5
+
+# 路径配置
+paths:
+  projects_dir: "data/projects"
+  models_dir: "models"
+  temp_dir: "temp"
