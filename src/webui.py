@@ -33,7 +33,8 @@ class NovelVideoApp:
         with gr.Blocks(
             title="小说转视频 - 混合方案",
             theme=gr.themes.Soft(),
-            css=self._get_custom_css()
+            css=self._get_custom_css(),
+            fill_width=True
         ) as app:
             gr.Markdown("# 📚 小说转视频生成系统")
             gr.Markdown("*基于混合方案: 本地LLM + 本地图像 + 远端视频API + 本地TTS*")
@@ -239,8 +240,9 @@ class NovelVideoApp:
                     choices=["单场景", "章节", "完整视频"],
                     value="单场景"
                 )
-                scene_selector = gr.Dropdown(label="选择场景")
-                refresh_preview_btn = gr.Button("刷新")
+                scene_selector = gr.Dropdown(label="选择场景", choices=[], interactive=True)
+                load_scenes_preview_btn = gr.Button("加载场景列表")
+                refresh_preview_btn = gr.Button("刷新预览", variant="primary")
 
             with gr.Column(scale=3):
                 gr.Markdown("### 视频预览")
@@ -249,9 +251,13 @@ class NovelVideoApp:
 
                 with gr.Row():
                     image_preview = gr.Image(label="场景图像")
-                    subtitle_preview = gr.Textbox(label="字幕", lines=2)
+                    subtitle_preview = gr.Textbox(label="字幕", lines=2, interactive=False)
 
         # 事件绑定
+        load_scenes_preview_btn.click(
+            fn=lambda: gr.update(choices=self._get_scene_choices()),
+            outputs=[scene_selector]
+        )
         refresh_preview_btn.click(
             fn=self._refresh_preview,
             inputs=[preview_type, scene_selector],
@@ -493,31 +499,325 @@ class NovelVideoApp:
         finally:
             self.is_running = False
 
-    def _save_settings(self, *args) -> str:
-        """保存设置"""
-        # TODO: 实现设置保存
-        return "设置已保存"
+    def _save_settings(
+        self,
+        ollama_url: str,
+        ollama_model: str,
+        comfyui_url: str,
+        cosyvoice_url: str,
+        video_provider: str,
+        video_api_key: str,
+        use_idle_time: bool,
+        resolution: str,
+        fps: int
+    ) -> str:
+        """保存设置到配置文件"""
+        try:
+            import yaml
+            config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
 
-    def _select_scene(self, evt: gr.SelectData):
-        """选择场景"""
-        # TODO: 实现场景选择
-        pass
+            # 构建配置数据
+            config_data = {
+                "local": {
+                    "ollama_url": ollama_url,
+                    "ollama_model": ollama_model,
+                    "comfyui_url": comfyui_url,
+                    "cosyvoice_url": cosyvoice_url
+                },
+                "api": {
+                    "video_provider": video_provider,
+                    "use_idle_time": use_idle_time
+                },
+                "video": {
+                    "resolution": resolution,
+                    "fps": fps
+                }
+            }
 
-    def _save_scene(self, *args):
-        """保存场景"""
-        # TODO: 实现场景保存
-        pass
+            # 保存到文件
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, allow_unicode=True, default_flow_style=False)
 
-    def _refresh_preview(self, *args):
-        """刷新预览"""
-        # TODO: 实现预览刷新
-        pass
+            # 保存API密钥到.env文件
+            if video_api_key:
+                env_path = Path(__file__).parent.parent / ".env"
+                env_content = ""
+                if env_path.exists():
+                    env_content = env_path.read_text(encoding="utf-8")
+
+                # 更新或添加API密钥
+                key_name = "JIMENG_API_KEY" if video_provider == "jimeng" else "KLING_API_KEY"
+                if key_name in env_content:
+                    import re
+                    env_content = re.sub(f"{key_name}=.*", f"{key_name}={video_api_key}", env_content)
+                else:
+                    env_content += f"\n{key_name}={video_api_key}"
+                env_path.write_text(env_content.strip() + "\n", encoding="utf-8")
+
+            # 重新加载配置
+            from .utils.config import reload_config
+            self.config = reload_config()
+
+            return "✅ 设置已保存"
+        except Exception as e:
+            logger.error(f"保存设置失败: {e}")
+            return f"❌ 保存失败: {e}"
+
+    def _select_scene(self, evt: gr.SelectData) -> Tuple[str, float, str, str, str, Optional[str]]:
+        """选择场景 - 加载场景详细信息"""
+        if not self.current_project:
+            return "", 5.0, "", "", "static", None
+
+        try:
+            storyboard_path = self.current_project / "storyboard.json"
+            if not storyboard_path.exists():
+                return "", 5.0, "", "", "static", None
+
+            storyboard = load_json(storyboard_path)
+            scenes = storyboard.get("scenes", [])
+
+            # 获取选中的行索引
+            row_idx = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
+
+            if row_idx < 0 or row_idx >= len(scenes):
+                return "", 5.0, "", "", "static", None
+
+            scene = scenes[row_idx]
+            scene_id = scene.get("id", "")
+            duration = float(scene.get("duration", 5.0))
+
+            # 获取视觉描述
+            visual = scene.get("visual", {})
+            description = visual.get("description", "")
+
+            # 获取对话/旁白
+            audio = scene.get("audio", {})
+            dialogue_text = ""
+            if audio.get("narration") and audio["narration"].get("text"):
+                dialogue_text = f"[旁白] {audio['narration']['text']}"
+            dialogues = audio.get("dialogues", [])
+            for d in dialogues:
+                if d.get("text"):
+                    char_id = d.get("character_id", "未知")
+                    dialogue_text += f"\n[{char_id}] {d['text']}"
+
+            # 获取镜头类型
+            camera = visual.get("camera", {})
+            camera_type = camera.get("type", "static")
+
+            # 获取预览图像
+            image_path = self.current_project / "images" / f"{scene_id}.png"
+            preview_image = str(image_path) if image_path.exists() else None
+
+            return scene_id, duration, description, dialogue_text.strip(), camera_type, preview_image
+
+        except Exception as e:
+            logger.error(f"选择场景失败: {e}")
+            return "", 5.0, "", "", "static", None
+
+    def _save_scene(
+        self,
+        scene_id: str,
+        duration: float,
+        description: str,
+        dialogue: str,
+        camera_type: str
+    ) -> List[List[str]]:
+        """保存场景修改"""
+        if not self.current_project or not scene_id:
+            return self._load_scenes()
+
+        try:
+            storyboard_path = self.current_project / "storyboard.json"
+            if not storyboard_path.exists():
+                return self._load_scenes()
+
+            storyboard = load_json(storyboard_path)
+            scenes = storyboard.get("scenes", [])
+
+            # 找到并更新场景
+            for scene in scenes:
+                if scene.get("id") == scene_id:
+                    scene["duration"] = duration
+
+                    # 更新视觉描述
+                    if "visual" not in scene:
+                        scene["visual"] = {}
+                    scene["visual"]["description"] = description
+
+                    # 更新镜头
+                    if "camera" not in scene["visual"]:
+                        scene["visual"]["camera"] = {}
+                    scene["visual"]["camera"]["type"] = camera_type
+
+                    # 解析并更新对话/旁白
+                    if dialogue:
+                        if "audio" not in scene:
+                            scene["audio"] = {}
+
+                        lines = dialogue.strip().split("\n")
+                        scene["audio"]["dialogues"] = []
+
+                        for line in lines:
+                            line = line.strip()
+                            if line.startswith("[旁白]"):
+                                text = line.replace("[旁白]", "").strip()
+                                scene["audio"]["narration"] = {"text": text, "emotion": "narrative"}
+                            elif line.startswith("[") and "]" in line:
+                                # 解析 [角色ID] 内容
+                                bracket_end = line.index("]")
+                                char_id = line[1:bracket_end]
+                                text = line[bracket_end + 1:].strip()
+                                scene["audio"]["dialogues"].append({
+                                    "character_id": char_id,
+                                    "text": text,
+                                    "emotion": "neutral"
+                                })
+
+                    # 重置生成状态
+                    if "generation_status" in scene:
+                        scene["generation_status"]["image"] = "pending"
+
+                    break
+
+            # 保存
+            save_json(storyboard_path, storyboard)
+            logger.info(f"场景 {scene_id} 已保存")
+
+            return self._load_scenes()
+
+        except Exception as e:
+            logger.error(f"保存场景失败: {e}")
+            return self._load_scenes()
+
+    def _refresh_preview(
+        self,
+        preview_type: str,
+        scene_selector: Optional[str]
+    ) -> Tuple[Optional[str], Optional[str], Optional[str], str]:
+        """刷新预览内容"""
+        if not self.current_project:
+            return None, None, None, "请先打开项目"
+
+        try:
+            if preview_type == "单场景":
+                return self._preview_single_scene(scene_selector)
+            elif preview_type == "章节":
+                return self._preview_chapter()
+            elif preview_type == "完整视频":
+                return self._preview_full_video()
+            else:
+                return None, None, None, ""
+
+        except Exception as e:
+            logger.error(f"刷新预览失败: {e}")
+            return None, None, None, f"预览失败: {e}"
+
+    def _preview_single_scene(
+        self,
+        scene_id: Optional[str]
+    ) -> Tuple[Optional[str], Optional[str], Optional[str], str]:
+        """预览单个场景"""
+        if not scene_id:
+            # 如果没有选择场景，尝试获取第一个
+            storyboard_path = self.current_project / "storyboard.json"
+            if storyboard_path.exists():
+                storyboard = load_json(storyboard_path)
+                scenes = storyboard.get("scenes", [])
+                if scenes:
+                    scene_id = scenes[0].get("id")
+
+        if not scene_id:
+            return None, None, None, "没有可预览的场景"
+
+        # 获取各资源路径
+        video_path = self.current_project / "videos" / f"{scene_id}.mp4"
+        audio_path = self.current_project / "audio" / f"{scene_id}.wav"
+        image_path = self.current_project / "images" / f"{scene_id}.png"
+
+        video = str(video_path) if video_path.exists() else None
+        audio = str(audio_path) if audio_path.exists() else None
+        image = str(image_path) if image_path.exists() else None
+
+        # 获取字幕
+        subtitle = ""
+        storyboard_path = self.current_project / "storyboard.json"
+        if storyboard_path.exists():
+            storyboard = load_json(storyboard_path)
+            for scene in storyboard.get("scenes", []):
+                if scene.get("id") == scene_id:
+                    subtitle_data = scene.get("subtitle", {})
+                    subtitle = subtitle_data.get("text", "")
+                    break
+
+        return video, audio, image, subtitle
+
+    def _preview_chapter(self) -> Tuple[Optional[str], Optional[str], Optional[str], str]:
+        """预览章节（暂不实现完整功能）"""
+        return None, None, None, "章节预览功能开发中..."
+
+    def _preview_full_video(self) -> Tuple[Optional[str], Optional[str], Optional[str], str]:
+        """预览完整视频"""
+        output_path = self.current_project / "output" / "final_video.mp4"
+        if output_path.exists():
+            return str(output_path), None, None, "最终视频"
+        return None, None, None, "完整视频尚未生成"
+
+    def _get_scene_choices(self) -> List[str]:
+        """获取场景选择列表"""
+        if not self.current_project:
+            return []
+
+        storyboard_path = self.current_project / "storyboard.json"
+        if not storyboard_path.exists():
+            return []
+
+        storyboard = load_json(storyboard_path)
+        scenes = storyboard.get("scenes", [])
+        return [s.get("id", f"scene_{i}") for i, s in enumerate(scenes)]
 
     def _get_custom_css(self) -> str:
-        """自定义CSS"""
+        """自定义CSS - 全屏居中布局"""
         return """
         .gradio-container {
-            max-width: 1400px !important;
+            max-width: 100% !important;
+            width: 100% !important;
+            margin: 0 auto !important;
+            padding: 20px 40px !important;
+        }
+        .main {
+            max-width: 1600px !important;
+            margin: 0 auto !important;
+        }
+        #component-0 {
+            max-width: 1600px !important;
+            margin: 0 auto !important;
+        }
+        .contain {
+            max-width: 100% !important;
+        }
+        .tabs {
+            width: 100% !important;
+        }
+        .tabitem {
+            width: 100% !important;
+        }
+        .form {
+            width: 100% !important;
+        }
+        .block {
+            width: 100% !important;
+        }
+        footer {
+            display: none !important;
+        }
+        h1 {
+            text-align: center !important;
+            margin-bottom: 10px !important;
+        }
+        h1 + p {
+            text-align: center !important;
+            margin-bottom: 20px !important;
         }
         """
 
