@@ -2,6 +2,36 @@
 
 基于混合方案的小说转视频自动化生成框架，将小说文本自动转换为带配音和字幕的视频。
 
+## 快速开始
+
+### 一键安装
+```powershell
+# 首次使用，运行安装脚本
+.\setup.bat
+```
+
+### 一键启动
+```powershell
+# 启动Web界面 (自动检查环境)
+.\start_webui.bat
+
+# 或使用PowerShell脚本
+.\start.ps1
+```
+
+### 环境检查
+```powershell
+# 检查所有依赖和服务状态
+.venv\Scripts\python.exe scripts\check_env.py
+
+# 自动安装缺失的Python包
+.venv\Scripts\python.exe scripts\check_env.py --install
+```
+
+> **注意**: 首次运行会自动安装 PyTorch 和 edge-tts，可能需要几分钟。
+
+---
+
 ## 技术架构
 
 | 模块 | 技术 | 部署方式 | 说明 |

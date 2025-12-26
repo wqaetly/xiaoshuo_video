@@ -88,7 +88,7 @@ python -m src.main run --project "项目名" --resume  # 断点续传
 项目配置了 mcp-router，可使用以下 MCP 工具辅助开发：
 
 ### Context7 (文档查询)
-查询第三方库的最新文档和 API 用法。
+查询第三方库的最新文档和 API 用法。遇到不确定，不认识的API需求时，请必须使用context7进行查询
 
 ```
 # 先解析库 ID

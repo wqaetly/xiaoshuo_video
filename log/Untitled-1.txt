@@ -1,0 +1,35 @@
+========================================
+    Novel2Video - Web UI
+========================================
+
+Checking environment...
+
+[OK] FFmpeg installed - project
+[OK] PyTorch installed
+
+========================================
+Starting Web UI...
+Browser: http://127.0.0.1:7860
+
+Press Ctrl+C to stop
+========================================
+
+🚀 启动Web界面: http://127.0.0.1:7860
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "E:\Study\wqaetly\xiaoshuo_video\src\main.py", line 212, in <module>
+    main()
+  File "E:\Study\wqaetly\xiaoshuo_video\src\main.py", line 84, in main
+    cmd_ui(args.host, args.port, args.share)
+  File "E:\Study\wqaetly\xiaoshuo_video\src\main.py", line 177, in cmd_ui
+    launch(server_name=host, server_port=port, share=share)
+  File "E:\Study\wqaetly\xiaoshuo_video\src\webui\app.py", line 780, in launch
+    ui.launch(
+  File "E:\Study\wqaetly\xiaoshuo_video\.venv\Lib\site-packages\gradio\blocks.py", line 2693, in launch
+    ) = http_server.start_server(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\Study\wqaetly\xiaoshuo_video\.venv\Lib\site-packages\gradio\http_server.py", line 182, in start_server
+    raise OSError(
+OSError: Cannot find empty port in range: 7860-7860. You can specify a different port by setting the GRADIO_SERVER_PORT environment variable or passing the `server_port` parameter to `launch()`.
+Press any key to continue . . .

@@ -1,0 +1,47 @@
+# Pre-commit hooks 配置
+# 安装: pre-commit install
+# 手动运行: pre-commit run --all-files
+
+repos:
+  # Ruff - 快速 Python linter 和 formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # 通用文件检查
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(ComfyUI|CosyVoice)/
+      - id: end-of-file-fixer
+        exclude: ^(ComfyUI|CosyVoice)/
+      - id: check-yaml
+        args: [--unsafe]
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: [--branch, main, --branch, master]
+
+  # MyPy 类型检查 (可选，较慢)
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.8.0
+  #   hooks:
+  #     - id: mypy
+  #       additional_dependencies:
+  #         - types-PyYAML
+  #         - types-requests
+  #       args: [--ignore-missing-imports]
+  #       exclude: ^(ComfyUI|CosyVoice|tests)/
+
+# CI 配置
+ci:
+  autofix_commit_msg: "style: auto-fix by pre-commit hooks"
+  autoupdate_commit_msg: "chore: update pre-commit hooks"

@@ -16,6 +16,9 @@ ffmpeg-python>=0.2.0
 # LLM
 openai>=1.0
 
+# TTS语音合成
+edge-tts>=6.1.0
+
 # 工具
 tqdm>=4.66
 rich>=13.0
@@ -29,3 +32,6 @@ python-dotenv>=1.0
 
 # 异步
 asyncio-throttle>=1.0
+
+# GPU加速 (可选，启动脚本会自动安装)
+# torch>=2.0

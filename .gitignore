@@ -73,6 +73,9 @@ tmp/
 *.temp
 *.bak
 
+# FFmpeg (项目内置，太大不提交)
+tools/ffmpeg/
+
 # 日志
 logs/
 *.log

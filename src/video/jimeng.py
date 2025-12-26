@@ -5,6 +5,12 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from .api_client import VideoAPIClient, VideoData
 from ..utils.logger import get_logger
+from ..utils.retry import (
+    RetryConfig,
+    APIError,
+    APIErrorCode,
+    calculate_delay,
+)
 
 logger = get_logger(__name__)
 
@@ -61,8 +67,7 @@ class JimengClient(VideoAPIClient):
         )
 
     def _upload_image(self, image_path: Path) -> str:
-        """上传图片到即梦服务器"""
-        # 读取图片并编码
+        """上传图片到即梦服务器 (带重试)"""
         with open(image_path, "rb") as f:
             image_data = base64.b64encode(f.read()).decode()
 
@@ -71,20 +76,68 @@ class JimengClient(VideoAPIClient):
             "filename": image_path.name
         }
 
-        try:
-            response = self._session.post(
-                f"{self.base_url}/images/upload",
-                json=payload,
-                timeout=60
+        last_exception = None
+        for attempt in range(self.retry_config.max_retries + 1):
+            try:
+                response = self._session.post(
+                    f"{self.base_url}/images/upload",
+                    json=payload,
+                    timeout=60
+                )
+                
+                if response.status_code == 429:
+                    raise APIError(
+                        code=APIErrorCode.RATE_LIMITED,
+                        message="请求过于频繁，请稍后重试",
+                        retryable=True
+                    )
+                elif response.status_code == 401:
+                    raise APIError(
+                        code=APIErrorCode.AUTHENTICATION_FAILED,
+                        message="API密钥无效或已过期",
+                        retryable=False
+                    )
+                
+                response.raise_for_status()
+                data = response.json()
+                
+                if "error" in data:
+                    raise APIError(
+                        code=data.get("error_code", APIErrorCode.UNKNOWN),
+                        message=data.get("error", "未知错误"),
+                        details=data,
+                        retryable=False
+                    )
+                
+                image_id = data.get("image_id")
+                logger.debug(f"图片上传成功: {image_id}")
+                return image_id
+                
+            except APIError as e:
+                if not e.retryable or attempt >= self.retry_config.max_retries:
+                    raise
+                last_exception = e
+            except Exception as e:
+                last_exception = e
+                if attempt >= self.retry_config.max_retries:
+                    break
+                    
+            delay = calculate_delay(
+                attempt,
+                self.retry_config.base_delay,
+                self.retry_config.max_delay,
+                self.retry_config.exponential_base,
+                self.retry_config.jitter
             )
-            response.raise_for_status()
-            data = response.json()
-            image_id = data.get("image_id")
-            logger.debug(f"图片上传成功: {image_id}")
-            return image_id
-        except Exception as e:
-            logger.error(f"图片上传失败: {e}")
-            raise
+            logger.warning(f"图片上传失败: {last_exception}, 等待 {delay:.1f}s 后重试")
+            time.sleep(delay)
+        
+        logger.error(f"图片上传失败: {last_exception}")
+        raise APIError(
+            code=APIErrorCode.NETWORK_ERROR,
+            message=f"图片上传失败: {last_exception}",
+            retryable=False
+        )
 
     def _create_task(
         self,
@@ -92,33 +145,81 @@ class JimengClient(VideoAPIClient):
         prompt: str,
         duration: float
     ) -> str:
-        """创建视频生成任务"""
+        """创建视频生成任务 (带重试)"""
         payload = {
             "image_id": image_id,
             "prompt": prompt,
             "duration": duration,
-            "model": "video-01",  # 模型版本
+            "model": "video-01",
             "use_idle_time": self.use_idle_time,
             "settings": {
                 "motion_strength": 0.7,
-                "seed": -1  # 随机种子
+                "seed": -1
             }
         }
 
-        try:
-            response = self._session.post(
-                f"{self.base_url}/video/generate",
-                json=payload,
-                timeout=30
+        last_exception = None
+        for attempt in range(self.retry_config.max_retries + 1):
+            try:
+                response = self._session.post(
+                    f"{self.base_url}/video/generate",
+                    json=payload,
+                    timeout=30
+                )
+                
+                if response.status_code == 429:
+                    raise APIError(
+                        code=APIErrorCode.RATE_LIMITED,
+                        message="请求过于频繁",
+                        retryable=True
+                    )
+                elif response.status_code == 402:
+                    raise APIError(
+                        code=APIErrorCode.INSUFFICIENT_QUOTA,
+                        message="账户余额不足",
+                        retryable=False
+                    )
+                    
+                response.raise_for_status()
+                data = response.json()
+                
+                if "error" in data:
+                    raise APIError(
+                        code=data.get("error_code", APIErrorCode.UNKNOWN),
+                        message=data.get("error", "创建任务失败"),
+                        details=data,
+                        retryable=False
+                    )
+                
+                task_id = data.get("task_id")
+                logger.info(f"视频生成任务创建成功: {task_id}")
+                return task_id
+                
+            except APIError as e:
+                if not e.retryable or attempt >= self.retry_config.max_retries:
+                    raise
+                last_exception = e
+            except Exception as e:
+                last_exception = e
+                if attempt >= self.retry_config.max_retries:
+                    break
+            
+            delay = calculate_delay(
+                attempt,
+                self.retry_config.base_delay,
+                self.retry_config.max_delay,
+                self.retry_config.exponential_base,
+                self.retry_config.jitter
             )
-            response.raise_for_status()
-            data = response.json()
-            task_id = data.get("task_id")
-            logger.info(f"视频生成任务创建成功: {task_id}")
-            return task_id
-        except Exception as e:
-            logger.error(f"创建生成任务失败: {e}")
-            raise
+            logger.warning(f"创建任务失败: {last_exception}, 等待 {delay:.1f}s 后重试")
+            time.sleep(delay)
+        
+        logger.error(f"创建生成任务失败: {last_exception}")
+        raise APIError(
+            code=APIErrorCode.VIDEO_GENERATION_FAILED,
+            message=f"创建生成任务失败: {last_exception}",
+            retryable=False
+        )
 
     def check_status(self, task_id: str) -> dict:
         """检查任务状态"""

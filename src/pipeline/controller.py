@@ -1,10 +1,11 @@
 """Pipeline流程控制器"""
 import gc
 from pathlib import Path
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable, Dict, Any, List
 import torch
 
 from .state import PipelineState, Phase
+from .scheduler import run_parallel_sync, TaskPriority
 from ..utils.config import Config, get_config
 from ..utils.logger import get_logger
 from ..utils.file_utils import load_json, save_json, load_yaml, ensure_dir
@@ -35,6 +36,11 @@ class PipelineController:
         self.on_progress: Optional[Callable[[str, str, float], None]] = None
         self.on_phase_change: Optional[Callable[[Phase], None]] = None
         self.on_error: Optional[Callable[[str, str], None]] = None
+        
+        # 跳过失败场景选项 (默认开启)
+        self.skip_failed_scenes: bool = True
+        # 失败阈值 - 失败率超过此值则停止 (0.0-1.0, 默认0.5表示50%)
+        self.failure_threshold: float = 0.5
 
     def init_modules(self) -> None:
         """初始化各个模块"""
@@ -239,11 +245,14 @@ class PipelineController:
         characters = load_json(self.project_path / "characters.json")
         scenes = storyboard.get("scenes", [])
         total = len(scenes)
+        failed_count = 0
+        success_count = 0
 
         for i, scene in enumerate(scenes):
             scene_id = scene["id"]
 
             if self.state.is_scene_completed(scene_id, "image"):
+                success_count += 1
                 continue
 
             self._report_progress(
@@ -262,11 +271,22 @@ class PipelineController:
                 self.state.mark_scene_completed(scene_id, "image")
                 self.state.current_scene_index = i + 1
                 self._save_state()
+                success_count += 1
             except Exception as e:
-                logger.error(f"场景 {scene_id} 图像生成失败: {e}")
-                self.state.add_error("generate_images", scene_id, str(e))
+                failed_count += 1
+                self._handle_scene_error("generate_images", scene_id, e, total, failed_count - 1)
+                self._save_state()
 
-        self._report_progress("图像生成", "场景图像生成完成", 1.0)
+        # 报告最终结果
+        if failed_count > 0:
+            self._report_progress(
+                "图像生成", 
+                f"完成: {success_count}成功, {failed_count}失败 (共{total}个)", 
+                1.0
+            )
+            logger.warning(f"图像生成阶段: {failed_count}/{total} 个场景失败")
+        else:
+            self._report_progress("图像生成", "场景图像生成完成", 1.0)
 
     def _phase_generate_audio(self) -> None:
         """音频生成阶段"""
@@ -276,11 +296,14 @@ class PipelineController:
         characters = load_json(self.project_path / "characters.json")
         scenes = storyboard.get("scenes", [])
         total = len(scenes)
+        failed_count = 0
+        success_count = 0
 
         for i, scene in enumerate(scenes):
             scene_id = scene["id"]
 
             if self.state.is_scene_completed(scene_id, "audio"):
+                success_count += 1
                 continue
 
             self._report_progress(
@@ -297,11 +320,22 @@ class PipelineController:
                 audio_data.save(self.project_path / "audio" / f"{scene_id}.wav")
                 self.state.mark_scene_completed(scene_id, "audio")
                 self._save_state()
+                success_count += 1
             except Exception as e:
-                logger.error(f"场景 {scene_id} 音频生成失败: {e}")
-                self.state.add_error("generate_audio", scene_id, str(e))
+                failed_count += 1
+                self._handle_scene_error("generate_audio", scene_id, e, total, failed_count - 1)
+                self._save_state()
 
-        self._report_progress("音频生成", "配音生成完成", 1.0)
+        # 报告最终结果
+        if failed_count > 0:
+            self._report_progress(
+                "音频生成", 
+                f"完成: {success_count}成功, {failed_count}失败 (共{total}个)", 
+                1.0
+            )
+            logger.warning(f"音频生成阶段: {failed_count}/{total} 个场景失败")
+        else:
+            self._report_progress("音频生成", "配音生成完成", 1.0)
 
     def _phase_generate_video(self) -> None:
         """视频生成阶段 (调用远端API)"""
@@ -314,16 +348,21 @@ class PipelineController:
         storyboard = load_json(self.project_path / "storyboard.json")
         scenes = storyboard.get("scenes", [])
         total = len(scenes)
+        failed_count = 0
+        success_count = 0
+        skipped_count = 0
 
         for i, scene in enumerate(scenes):
             scene_id = scene["id"]
 
             if self.state.is_scene_completed(scene_id, "video"):
+                success_count += 1
                 continue
 
             image_path = self.project_path / "images" / f"{scene_id}.png"
             if not image_path.exists():
                 logger.warning(f"图像不存在，跳过: {scene_id}")
+                skipped_count += 1
                 continue
 
             self._report_progress(
@@ -342,11 +381,27 @@ class PipelineController:
                 video_data.save(self.project_path / "videos" / f"{scene_id}.mp4")
                 self.state.mark_scene_completed(scene_id, "video")
                 self._save_state()
+                success_count += 1
             except Exception as e:
-                logger.error(f"场景 {scene_id} 视频生成失败: {e}")
-                self.state.add_error("generate_video", scene_id, str(e))
+                failed_count += 1
+                self._handle_scene_error("generate_video", scene_id, e, total, failed_count - 1)
+                self._save_state()
 
-        self._report_progress("视频生成", "视频片段生成完成", 1.0)
+        # 报告最终结果
+        result_parts = [f"{success_count}成功"]
+        if failed_count > 0:
+            result_parts.append(f"{failed_count}失败")
+        if skipped_count > 0:
+            result_parts.append(f"{skipped_count}跳过")
+        
+        self._report_progress(
+            "视频生成", 
+            f"完成: {', '.join(result_parts)} (共{total}个)", 
+            1.0
+        )
+        
+        if failed_count > 0:
+            logger.warning(f"视频生成阶段: {failed_count}/{total} 个场景失败")
 
     def _phase_compose(self) -> None:
         """合成阶段"""
@@ -357,24 +412,46 @@ class PipelineController:
 
         # 收集所有片段
         clips = []
+        skipped_scenes = []
+        
         for scene in scenes:
             scene_id = scene["id"]
             video_path = self.project_path / "videos" / f"{scene_id}.mp4"
             audio_path = self.project_path / "audio" / f"{scene_id}.wav"
+            image_path = self.project_path / "images" / f"{scene_id}.png"
 
-            # 如果视频不存在，尝试使用图像
-            if not video_path.exists():
-                video_path = self.project_path / "images" / f"{scene_id}.png"
-
+            # 优先使用视频，其次使用图像
+            source_path = None
             if video_path.exists():
-                clips.append({
-                    "video": video_path,
-                    "audio": audio_path if audio_path.exists() else None,
-                    "subtitle": scene.get("subtitle", {})
-                })
+                source_path = video_path
+            elif image_path.exists():
+                source_path = image_path
+                logger.info(f"场景 {scene_id} 使用图像替代视频")
+            else:
+                # 没有可用资源，跳过此场景
+                skipped_scenes.append(scene_id)
+                logger.warning(f"场景 {scene_id} 无可用资源，跳过")
+                continue
+
+            clips.append({
+                "video": source_path,
+                "audio": audio_path if audio_path.exists() else None,
+                "subtitle": scene.get("subtitle", {}),
+                "scene_id": scene_id,
+                "duration": scene.get("duration", 5.0)
+            })
 
         if not clips:
-            raise RuntimeError("没有可用的视频片段")
+            raise RuntimeError("没有可用的视频片段，无法合成")
+        
+        # 报告跳过的场景
+        if skipped_scenes:
+            logger.warning(f"合成阶段跳过 {len(skipped_scenes)} 个场景: {', '.join(skipped_scenes[:5])}{'...' if len(skipped_scenes) > 5 else ''}")
+            self._report_progress(
+                "合成", 
+                f"准备合成 {len(clips)}/{len(scenes)} 个场景 ({len(skipped_scenes)}个跳过)", 
+                0.1
+            )
 
         # 合成视频
         self._report_progress("合成", "拼接视频片段...", 0.3)
@@ -385,14 +462,21 @@ class PipelineController:
             output_path=output_path
         )
 
-        # 生成字幕
+        # 生成字幕 (只为有资源的场景生成)
         self._report_progress("合成", "生成字幕...", 0.7)
         from ..compose import SubtitleGenerator
         subtitle_gen = SubtitleGenerator()
         subtitle_path = self.project_path / "output" / "subtitles.srt"
-        subtitle_gen.generate_srt(scenes, subtitle_path)
+        
+        # 过滤出有资源的场景
+        valid_scenes = [s for s in scenes if s["id"] not in skipped_scenes]
+        subtitle_gen.generate_srt(valid_scenes, subtitle_path)
 
-        self._report_progress("合成", f"视频已保存: {output_path}", 1.0)
+        # 最终报告
+        result_msg = f"视频已保存: {output_path}"
+        if skipped_scenes:
+            result_msg += f" (跳过{len(skipped_scenes)}个失败场景)"
+        self._report_progress("合成", result_msg, 1.0)
 
     def _build_motion_prompt(self, scene: Dict[str, Any]) -> str:
         """构建视频运动提示词"""
@@ -420,6 +504,52 @@ class PipelineController:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    def _check_failure_threshold(self, phase_name: str, total: int, failed: int) -> None:
+        """检查失败率是否超过阈值"""
+        if total == 0:
+            return
+        
+        failure_rate = failed / total
+        if failure_rate > self.failure_threshold:
+            error_msg = f"{phase_name} 失败率 ({failure_rate*100:.1f}%) 超过阈值 ({self.failure_threshold*100:.1f}%)"
+            logger.error(error_msg)
+            if not self.skip_failed_scenes:
+                raise RuntimeError(error_msg)
+            else:
+                logger.warning(f"继续执行，但 {failed}/{total} 个任务失败")
+
+    def _handle_scene_error(
+        self, 
+        phase_name: str, 
+        scene_id: str, 
+        error: Exception,
+        total_scenes: int,
+        current_failed: int
+    ) -> bool:
+        """
+        处理场景错误
+        返回: True表示继续执行, False表示应该停止
+        """
+        error_msg = str(error)
+        logger.error(f"场景 {scene_id} 处理失败: {error_msg}")
+        self.state.add_error(phase_name, scene_id, error_msg)
+        
+        # 触发错误回调
+        if self.on_error:
+            self.on_error(scene_id, error_msg)
+        
+        if not self.skip_failed_scenes:
+            # 不跳过失败场景时，立即抛出异常
+            raise error
+        
+        # 检查失败率
+        failure_rate = (current_failed + 1) / total_scenes
+        if failure_rate > self.failure_threshold:
+            logger.error(f"失败率 ({failure_rate*100:.1f}%) 超过阈值，停止执行")
+            raise RuntimeError(f"失败率超过阈值: {current_failed + 1}/{total_scenes}")
+        
+        return True  # 继续执行
+
     # 单阶段执行方法
     def run_phase(self, phase: Phase) -> None:
         """单独执行某个阶段"""
@@ -441,3 +571,256 @@ class PipelineController:
             self._set_phase(phase)
             phase_methods[phase]()
             self._clear_vram()
+
+    def _phase_generate_images_parallel(self) -> None:
+        """图像生成阶段 (并行版本)"""
+        self._report_progress("图像生成", "生成场景图像 (并行)...", 0.0)
+
+        storyboard = load_json(self.project_path / "storyboard.json")
+        characters = load_json(self.project_path / "characters.json")
+        scenes = storyboard.get("scenes", [])
+        
+        pending_scenes = [
+            s for s in scenes 
+            if not self.state.is_scene_completed(s["id"], "image")
+        ]
+        
+        if not pending_scenes:
+            self._report_progress("图像生成", "所有场景图像已生成", 1.0)
+            return
+        
+        total = len(pending_scenes)
+        logger.info(f"并行生成 {total} 个场景图像")
+        
+        def generate_single_image(scene: Dict[str, Any]) -> Dict[str, Any]:
+            """生成单个场景图像"""
+            scene_id = scene["id"]
+            try:
+                image = self._image_gen.generate_scene(
+                    scene,
+                    characters,
+                    style_preset=self.config.video.style
+                )
+                image.save(self.project_path / "images" / f"{scene_id}.png")
+                return {"scene_id": scene_id, "success": True, "error": None}
+            except Exception as e:
+                logger.error(f"场景 {scene_id} 图像生成失败: {e}")
+                return {"scene_id": scene_id, "success": False, "error": str(e)}
+        
+        tasks = [
+            {
+                "task_id": s["id"],
+                "func": generate_single_image,
+                "args": (s,),
+            }
+            for s in pending_scenes
+        ]
+        
+        def on_progress(task_id: str, progress: float):
+            self._report_progress("图像生成", f"进度 {progress*100:.0f}%", progress)
+        
+        results = run_parallel_sync(
+            tasks,
+            max_workers=self.config.generation.max_concurrent_tasks,
+            on_progress=on_progress
+        )
+        
+        for r in results:
+            result_data = r.get("result", {})
+            if result_data and result_data.get("success"):
+                self.state.mark_scene_completed(result_data["scene_id"], "image")
+            elif result_data:
+                self.state.add_error("generate_images", result_data["scene_id"], result_data.get("error", "未知错误"))
+        
+        self._save_state()
+        self._report_progress("图像生成", "场景图像生成完成", 1.0)
+
+    def _phase_generate_audio_parallel(self) -> None:
+        """音频生成阶段 (并行版本)"""
+        self._report_progress("音频生成", "生成配音 (并行)...", 0.0)
+
+        storyboard = load_json(self.project_path / "storyboard.json")
+        characters = load_json(self.project_path / "characters.json")
+        scenes = storyboard.get("scenes", [])
+        
+        pending_scenes = [
+            s for s in scenes
+            if not self.state.is_scene_completed(s["id"], "audio")
+        ]
+        
+        if not pending_scenes:
+            self._report_progress("音频生成", "所有场景音频已生成", 1.0)
+            return
+        
+        total = len(pending_scenes)
+        logger.info(f"并行生成 {total} 个场景音频")
+        
+        def generate_single_audio(scene: Dict[str, Any]) -> Dict[str, Any]:
+            """生成单个场景音频"""
+            scene_id = scene["id"]
+            try:
+                audio_data = self._tts.generate_scene_audio(
+                    scene.get("audio", {}),
+                    characters
+                )
+                audio_data.save(self.project_path / "audio" / f"{scene_id}.wav")
+                return {"scene_id": scene_id, "success": True, "error": None}
+            except Exception as e:
+                logger.error(f"场景 {scene_id} 音频生成失败: {e}")
+                return {"scene_id": scene_id, "success": False, "error": str(e)}
+        
+        tasks = [
+            {
+                "task_id": s["id"],
+                "func": generate_single_audio,
+                "args": (s,),
+            }
+            for s in pending_scenes
+        ]
+        
+        def on_progress(task_id: str, progress: float):
+            self._report_progress("音频生成", f"进度 {progress*100:.0f}%", progress)
+        
+        results = run_parallel_sync(
+            tasks,
+            max_workers=self.config.generation.max_concurrent_tasks,
+            on_progress=on_progress
+        )
+        
+        for r in results:
+            result_data = r.get("result", {})
+            if result_data and result_data.get("success"):
+                self.state.mark_scene_completed(result_data["scene_id"], "audio")
+            elif result_data:
+                self.state.add_error("generate_audio", result_data["scene_id"], result_data.get("error", "未知错误"))
+        
+        self._save_state()
+        self._report_progress("音频生成", "配音生成完成", 1.0)
+
+    def _phase_generate_images_and_audio_parallel(self) -> None:
+        """图像和音频同时并行生成"""
+        self._report_progress("并行生成", "同时生成图像和音频...", 0.0)
+
+        storyboard = load_json(self.project_path / "storyboard.json")
+        characters = load_json(self.project_path / "characters.json")
+        scenes = storyboard.get("scenes", [])
+
+        tasks = []
+        
+        for scene in scenes:
+            scene_id = scene["id"]
+            
+            if not self.state.is_scene_completed(scene_id, "image"):
+                tasks.append({
+                    "task_id": f"image_{scene_id}",
+                    "func": self._generate_scene_image,
+                    "args": (scene, characters),
+                })
+            
+            if not self.state.is_scene_completed(scene_id, "audio"):
+                tasks.append({
+                    "task_id": f"audio_{scene_id}",
+                    "func": self._generate_scene_audio,
+                    "args": (scene, characters),
+                })
+
+        if not tasks:
+            self._report_progress("并行生成", "所有内容已生成", 1.0)
+            return
+
+        logger.info(f"并行执行 {len(tasks)} 个任务")
+        
+        def on_progress(task_id: str, progress: float):
+            self._report_progress("并行生成", f"进度 {progress*100:.0f}%", progress)
+
+        results = run_parallel_sync(
+            tasks,
+            max_workers=self.config.generation.max_concurrent_tasks,
+            on_progress=on_progress
+        )
+        
+        for r in results:
+            task_id = r.get("task_id", "")
+            result_data = r.get("result", {})
+            
+            if result_data and result_data.get("success"):
+                scene_id = result_data["scene_id"]
+                task_type = result_data["type"]
+                self.state.mark_scene_completed(scene_id, task_type)
+            elif result_data:
+                self.state.add_error(
+                    f"generate_{result_data.get('type', 'unknown')}",
+                    result_data.get("scene_id", "unknown"),
+                    result_data.get("error", "未知错误")
+                )
+
+        self._save_state()
+        self._report_progress("并行生成", "图像和音频生成完成", 1.0)
+
+    def _generate_scene_image(self, scene: Dict[str, Any], characters: Dict[str, Any]) -> Dict[str, Any]:
+        """生成单个场景图像 (供并行调用)"""
+        scene_id = scene["id"]
+        try:
+            image = self._image_gen.generate_scene(
+                scene,
+                characters,
+                style_preset=self.config.video.style
+            )
+            image.save(self.project_path / "images" / f"{scene_id}.png")
+            return {"scene_id": scene_id, "type": "image", "success": True, "error": None}
+        except Exception as e:
+            logger.error(f"场景 {scene_id} 图像生成失败: {e}")
+            return {"scene_id": scene_id, "type": "image", "success": False, "error": str(e)}
+
+    def _generate_scene_audio(self, scene: Dict[str, Any], characters: Dict[str, Any]) -> Dict[str, Any]:
+        """生成单个场景音频 (供并行调用)"""
+        scene_id = scene["id"]
+        try:
+            audio_data = self._tts.generate_scene_audio(
+                scene.get("audio", {}),
+                characters
+            )
+            audio_data.save(self.project_path / "audio" / f"{scene_id}.wav")
+            return {"scene_id": scene_id, "type": "audio", "success": True, "error": None}
+        except Exception as e:
+            logger.error(f"场景 {scene_id} 音频生成失败: {e}")
+            return {"scene_id": scene_id, "type": "audio", "success": False, "error": str(e)}
+
+    def run_parallel(self, resume: bool = True) -> None:
+        """使用并行模式执行流程"""
+        if resume and self.state_file.exists():
+            self.state = PipelineState.load(self.state_file)
+            logger.info(f"从 {self.state.current_phase.value} 阶段恢复")
+        else:
+            self.state = PipelineState()
+
+        try:
+            phase_methods = {
+                Phase.INIT: self._phase_init,
+                Phase.ANALYZE: self._phase_analyze,
+                Phase.CHARACTER_DESIGN: self._phase_character_design,
+                Phase.GENERATE_IMAGES: self._phase_generate_images_parallel,
+                Phase.GENERATE_AUDIO: self._phase_generate_audio_parallel,
+                Phase.GENERATE_VIDEO: self._phase_generate_video,
+                Phase.COMPOSE: self._phase_compose,
+            }
+
+            for phase in Phase:
+                if phase in [Phase.DONE, Phase.ERROR]:
+                    continue
+
+                if self._should_run_phase(phase):
+                    self._set_phase(phase)
+                    phase_methods[phase]()
+                    self._clear_vram()
+
+            self._set_phase(Phase.DONE)
+            logger.info("视频生成完成!")
+            self._report_progress("完成", "视频已生成", 1.0)
+
+        except Exception as e:
+            logger.error(f"Pipeline执行错误: {e}")
+            self.state.add_error(self.state.current_phase.value, None, str(e))
+            self._set_phase(Phase.ERROR)
+            self._save_state()
+            raise
