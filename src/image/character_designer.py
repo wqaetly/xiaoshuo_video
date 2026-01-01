@@ -15,7 +15,7 @@ class CharacterDesigner:
     def __init__(
         self,
         comfyui_client: ComfyUIClient,
-        default_checkpoint: str = "sd_xl_base_1.0.safetensors"
+        default_checkpoint: str = "animagine-xl-4.0.safetensors"
     ):
         self.client = comfyui_client
         self.default_checkpoint = default_checkpoint

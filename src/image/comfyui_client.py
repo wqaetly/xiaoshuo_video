@@ -103,7 +103,7 @@ class ComfyUIClient:
             response = self._session.post(
                 f"{self.base_url}/prompt",
                 json=payload,
-                timeout=30
+                timeout=60
             )
             response.raise_for_status()
             data = response.json()
@@ -119,7 +119,7 @@ class ComfyUIClient:
         try:
             response = self._session.get(
                 f"{self.base_url}/history/{prompt_id}",
-                timeout=30
+                timeout=60
             )
             response.raise_for_status()
             return response.json()

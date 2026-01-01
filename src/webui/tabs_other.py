@@ -15,6 +15,8 @@ class CharactersTab:
 
     def __init__(self, app: "NovelVideoApp"):
         self.app = app
+        # 需要刷新的组件引用
+        self.char_list = None
 
     def create(self) -> None:
         """创建角色管理标签页"""
@@ -131,6 +133,9 @@ class PreviewTab:
 
     def __init__(self, app: "NovelVideoApp"):
         self.app = app
+        # 需要刷新的组件引用
+        self.scene_selector = None
+        self.chapter_selector = None
 
     def create(self) -> None:
         """创建预览标签页"""

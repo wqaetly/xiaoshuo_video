@@ -16,6 +16,9 @@ class ProjectTab:
 
     def __init__(self, app: "NovelVideoApp"):
         self.app = app
+        # 需要刷新的组件引用
+        self.project_info = None
+        self.project_list = None
 
     def create(self) -> None:
         """创建项目管理标签页"""
@@ -26,8 +29,8 @@ class ProjectTab:
                 self.novel_file = gr.File(label="上传小说文件 (.txt)", file_types=[".txt"])
                 self.video_style = gr.Dropdown(
                     label="视频风格",
-                    choices=["anime", "realistic", "illustration", "chinese_fantasy"],
-                    value="anime",
+                    choices=["anime", "realistic", "illustration", "chinese_fantasy", "xianxia", "realistic_gufeng"],
+                    value="xianxia",
                 )
                 self.create_btn = gr.Button("创建项目", variant="primary")
                 self.create_status = gr.Textbox(label="状态", interactive=False)
@@ -68,6 +71,13 @@ class StoryboardTab:
 
     def __init__(self, app: "NovelVideoApp"):
         self.app = app
+        # 需要刷新的组件引用
+        self.sortable_scene_list = None
+        self.scene_list = None
+        self.scene_order_state = None
+        self.filter_result_info = None
+        self.filter_chapter = None
+        self.scene_selector = None
 
     def create(self) -> None:
         """创建分镜编辑标签页"""
@@ -135,21 +145,33 @@ class StoryboardTab:
 
     def _create_scene_editor(self) -> None:
         """创建场景编辑器"""
+        # 场景选择下拉框
+        self.scene_selector = gr.Dropdown(
+            label="选择场景",
+            choices=[],
+            interactive=True,
+            elem_id="scene-selector-dropdown",
+        )
+        self.load_scene_btn = gr.Button("加载场景", size="sm")
+        
         self.scene_id = gr.Textbox(label="场景ID", interactive=False)
         self.scene_duration = gr.Slider(
             label="时长(秒)", minimum=3, maximum=10, step=0.5, value=5
         )
         self.scene_description = gr.Textbox(label="视觉描述", lines=3)
+        self.scene_sd_prompt = gr.Textbox(label="SD Prompt (图像生成提示词)", lines=3, interactive=False)
         self.scene_dialogue = gr.Textbox(label="对话/旁白", lines=2)
         self.scene_camera = gr.Dropdown(
             label="镜头类型",
-            choices=["static", "slow_zoom_in", "slow_zoom_out", "pan_left", "pan_right"],
+            choices=["static", "slow_zoom_in", "slow_zoom_out", "pan_left", "pan_right", "tilt_up", "tilt_down", "tracking", "dolly_in", "dolly_out"],
+            allow_custom_value=True,
         )
 
         with gr.Row():
-            self.save_scene_btn = gr.Button("保存修改")
-            self.regenerate_btn = gr.Button("重新生成", variant="secondary")
+            self.save_scene_btn = gr.Button("保存修改", variant="primary")
+            self.save_and_regenerate_btn = gr.Button("保存并重新生成图像", variant="secondary")
 
+        self.regenerate_status = gr.Textbox(label="生成状态", interactive=False)
         self.scene_preview = gr.Image(label="场景预览")
 
     def _bind_events(self) -> None:
@@ -162,31 +184,64 @@ class StoryboardTab:
             self.filter_result_info,
             self.filter_chapter,
         ]
+        
+        # 场景编辑器输出
+        scene_editor_outputs = [
+            self.scene_id,
+            self.scene_duration,
+            self.scene_description,
+            self.scene_sd_prompt,
+            self.scene_dialogue,
+            self.scene_camera,
+            self.scene_preview,
+        ]
+
+        # 加载分镜时同时更新场景选择下拉框
+        def load_scenes_and_update_selector(*args):
+            result = self.app.load_scenes_html_with_filter(*args)
+            # 从 scene_order_state 提取场景ID列表
+            scene_ids = result[2].split(",") if result[2] else []
+            return result + (gr.update(choices=scene_ids, value=None),)
 
         self.load_scenes_btn.click(
-            fn=self.app.load_scenes_html_with_filter,
+            fn=load_scenes_and_update_selector,
             inputs=filter_inputs,
-            outputs=filter_outputs,
+            outputs=filter_outputs + [self.scene_selector],
         )
+        
+        # 场景选择下拉框变化时加载场景详情
+        self.scene_selector.change(
+            fn=self.app.load_scene_detail,
+            inputs=[self.scene_selector],
+            outputs=scene_editor_outputs,
+        )
+        
+        # 加载场景按钮
+        self.load_scene_btn.click(
+            fn=self.app.load_scene_detail,
+            inputs=[self.scene_selector],
+            outputs=scene_editor_outputs,
+        )
+
         self.search_btn.click(
-            fn=self.app.load_scenes_html_with_filter,
+            fn=load_scenes_and_update_selector,
             inputs=filter_inputs,
-            outputs=filter_outputs,
+            outputs=filter_outputs + [self.scene_selector],
         )
         self.search_input.submit(
-            fn=self.app.load_scenes_html_with_filter,
+            fn=load_scenes_and_update_selector,
             inputs=filter_inputs,
-            outputs=filter_outputs,
+            outputs=filter_outputs + [self.scene_selector],
         )
         self.filter_status.change(
-            fn=self.app.load_scenes_html_with_filter,
+            fn=load_scenes_and_update_selector,
             inputs=filter_inputs,
-            outputs=filter_outputs,
+            outputs=filter_outputs + [self.scene_selector],
         )
         self.filter_chapter.change(
-            fn=self.app.load_scenes_html_with_filter,
+            fn=load_scenes_and_update_selector,
             inputs=filter_inputs,
-            outputs=filter_outputs,
+            outputs=filter_outputs + [self.scene_selector],
         )
         self.clear_filter_btn.click(
             fn=self.app.clear_scene_filter,
@@ -221,7 +276,28 @@ class StoryboardTab:
             ],
             outputs=[self.scene_list],
         ).then(
-            fn=self.app.load_scenes_html_with_filter,
+            fn=load_scenes_and_update_selector,
             inputs=filter_inputs,
-            outputs=filter_outputs,
+            outputs=filter_outputs + [self.scene_selector],
+        )
+        
+        # 保存并重新生成图像按钮
+        self.save_and_regenerate_btn.click(
+            fn=self.app.save_scene,
+            inputs=[
+                self.scene_id,
+                self.scene_duration,
+                self.scene_description,
+                self.scene_dialogue,
+                self.scene_camera,
+            ],
+            outputs=[self.scene_list],
+        ).then(
+            fn=self.app.regenerate_scene_sync,
+            inputs=[self.scene_id],
+            outputs=[self.regenerate_status, self.scene_preview],
+        ).then(
+            fn=load_scenes_and_update_selector,
+            inputs=filter_inputs,
+            outputs=filter_outputs + [self.scene_selector],
         )

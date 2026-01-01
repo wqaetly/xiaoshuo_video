@@ -14,7 +14,7 @@ class OllamaClient:
         self,
         base_url: str = "http://localhost:11434",
         model: str = "qwen2.5:14b",
-        timeout: int = 300
+        timeout: int = 600
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -47,9 +47,9 @@ class OllamaClient:
         system: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
-        stream: bool = False
+        stream: bool = True
     ) -> str:
-        """发送聊天请求"""
+        """发送聊天请求 (默认使用流式避免超时)"""
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -67,9 +67,9 @@ class OllamaClient:
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
         max_tokens: int = 4096,
-        stream: bool = False
+        stream: bool = True
     ) -> str:
-        """使用消息列表进行聊天"""
+        """使用消息列表进行聊天 (默认使用流式避免超时)"""
         payload = {
             "model": self.model,
             "messages": messages,
@@ -100,8 +100,8 @@ class OllamaClient:
         data = response.json()
         return data.get("message", {}).get("content", "")
 
-    def _chat_stream(self, payload: Dict[str, Any]) -> Generator[str, None, None]:
-        """流式聊天"""
+    def _chat_stream(self, payload: Dict[str, Any]) -> str:
+        """流式聊天 - 收集完整响应"""
         response = self._session.post(
             f"{self.base_url}/api/chat",
             json=payload,
@@ -116,7 +116,8 @@ class OllamaClient:
                 data = json.loads(line)
                 content = data.get("message", {}).get("content", "")
                 full_response += content
-                yield content
+                if data.get("done", False):
+                    break
 
         return full_response
 

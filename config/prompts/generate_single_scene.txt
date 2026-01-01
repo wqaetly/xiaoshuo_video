@@ -1,0 +1,84 @@
+你是专业的动画分镜师和AI绘画提示词专家。请根据小说片段生成下一个分镜场景。
+
+小说章节 (第{chapter_num}章):
+{chapter_text}
+
+已知角色信息:
+{characters_json}
+
+已生成的前几个场景摘要:
+{previous_scenes_summary}
+
+当前需要生成的场景编号: {scene_index}
+剩余未处理的文本起始位置提示: {text_hint}
+
+【重要规则】
+1. 每个场景应覆盖约50-100字的原文内容
+2. 一般来说，每100字原文对应1-2个场景
+3. 如果"剩余未处理的文本"为空或只剩标点符号，必须返回 {{"done": true}}
+4. 如果已生成场景的摘要已经覆盖了故事的结尾，必须返回 {{"done": true}}
+
+【画面描述生成规范 - 极其重要】
+description字段要像专业画师一样描述画面，必须包含：
+
+1. **人物主体**（如有）：
+   - 位置与构图（画面中央/左侧/右侧，中心构图/三分构图）
+   - 服饰细节（材质、颜色、纹样，如"月白色云纹广袖长袍"）
+   - 姿态动作（具体到手部、身体朝向）
+   - 表情神态（眼神、嘴角、情绪）
+   - 发型配饰（发髻样式、簪子、饰品）
+
+2. **场景层次**：
+   - 前景：最近的物品细节（茶杯的热气、书案上的物品）
+   - 中景：人物周围环境（家具、陈设）
+   - 远景/背景：窗外景色、天空、远山
+
+3. **光影氛围**：
+   - 光源方向（左侧晨光/右侧夕照/顶光）
+   - 光影效果（为侧脸镀上金边、投下细腻明暗）
+   - 整体氛围（宁静超脱/紧张压抑/温馨祥和）
+
+4. **艺术风格**：
+   - 画风（工笔水墨/写实油画/动漫插画）
+   - 意境（古典仙侠/现代都市/奇幻史诗）
+
+【重要说明】
+由于使用 Z-Image-Turbo 模型（Qwen词法分析器对中文优化），图像生成将直接使用 description 字段的中文描述，无需单独的 sd_prompt 字段。请确保 description 描述详尽、画面感强。
+
+要求:
+1. 只生成1个场景，时长控制在3-6秒
+2. 镜头类型: static, slow_zoom_in, slow_zoom_out, pan_left, pan_right, tilt_up, tilt_down
+3. 画面类型: wide_shot, medium_shot, close_up, extreme_close_up
+4. covered_text必须是原文中实际存在的连续文字片段
+
+输出格式（二选一）:
+
+如果故事还没讲完:
+```json
+{{
+  "done": false,
+  "covered_text": "这个场景覆盖的原文片段",
+  "scene": {{
+    "duration": 5.0,
+    "visual": {{
+      "description": "详细的画面描述，包含人物、场景层次、光影、风格，至少100字",
+      "sd_prompt": "英文标签化提示词，包含所有视觉元素",
+      "style_tags": ["风格标签"],
+      "characters_in_scene": ["char_001"],
+      "camera": {{"type": "static", "start_frame": "medium_shot", "end_frame": "medium_shot"}}
+    }},
+    "audio": {{
+      "narration": {{"text": "旁白", "emotion": "calm"}},
+      "dialogues": [],
+      "bgm": "ambient",
+      "sfx": []
+    }},
+    "subtitle": {{"text": "字幕", "style": "narration", "character": null}}
+  }}
+}}
+```
+
+如果故事已经讲完:
+```json
+{{"done": true}}
+```

@@ -49,7 +49,20 @@ class NovelVideoApp:
 
     def create_ui(self) -> gr.Blocks:
         """创建Gradio界面"""
-        self._theme = gr.themes.Soft()
+        # 使用浅色主题
+        self._theme = gr.themes.Soft(
+            primary_hue="indigo",
+            secondary_hue="slate",
+            neutral_hue="slate",
+        ).set(
+            body_background_fill="#f8fafc",
+            block_background_fill="#ffffff",
+            block_border_width="1px",
+            block_border_color="#e2e8f0",
+            input_background_fill="#ffffff",
+            button_primary_background_fill="linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            button_primary_text_color="#ffffff",
+        )
         self._css = get_custom_css()
         self._js = get_drag_sort_js()
         
@@ -57,7 +70,23 @@ class NovelVideoApp:
             title="小说转视频 - 混合方案",
             fill_width=True,
         ) as app:
-            gr.Markdown("# 📚 小说转视频生成系统", elem_classes=["app-title"])
+            # 全局状态栏
+            with gr.Row(elem_classes=["global-status-bar"]):
+                gr.Markdown("📚 小说转视频生成系统", elem_classes=["app-title-inline"])
+                self.global_project_selector = gr.Dropdown(
+                    label="",
+                    choices=self.get_project_list(),
+                    value=None,
+                    interactive=True,
+                    elem_classes=["global-project-dropdown"],
+                    scale=1,
+                    min_width=200,
+                    show_label=False,
+                    allow_custom_value=False,
+                )
+                self.global_refresh_btn = gr.Button("🔄", elem_classes=["status-bar-btn"], scale=0, min_width=44)
+                # 隐藏的状态组件，用于内部状态同步
+                self.global_project_status = gr.Markdown("", visible=False)
 
             with gr.Row(elem_classes=["main-layout"]):
                 # 左侧导航栏
@@ -75,21 +104,29 @@ class NovelVideoApp:
                 with gr.Column(scale=1, elem_classes=["content-area"]):
                     with gr.Tabs(elem_classes=["hidden-tabs"]) as tabs:
                         with gr.Tab("项目", id=0):
-                            ProjectTab(self).create()
+                            self.tab_project = ProjectTab(self)
+                            self.tab_project.create()
                         with gr.Tab("分镜", id=1):
-                            StoryboardTab(self).create()
+                            self.tab_storyboard = StoryboardTab(self)
+                            self.tab_storyboard.create()
                         with gr.Tab("角色", id=2):
-                            CharactersTab(self).create()
+                            self.tab_characters = CharactersTab(self)
+                            self.tab_characters.create()
                         with gr.Tab("生成", id=3):
-                            GenerationTab(self).create()
+                            self.tab_generation = GenerationTab(self)
+                            self.tab_generation.create()
                         with gr.Tab("预览", id=4):
-                            PreviewTab(self).create()
+                            self.tab_preview = PreviewTab(self)
+                            self.tab_preview.create()
                         with gr.Tab("设置", id=5):
-                            SettingsTab(self).create()
+                            self.tab_settings = SettingsTab(self)
+                            self.tab_settings.create()
                         with gr.Tab("任务", id=6):
-                            TasksTab(self).create()
+                            self.tab_tasks = TasksTab(self)
+                            self.tab_tasks.create()
                         with gr.Tab("剪辑", id=7):
-                            VideoEditorTab(self).create()
+                            self.tab_editor = VideoEditorTab(self)
+                            self.tab_editor.create()
             
             # 导航按钮切换Tab
             nav_project.click(fn=lambda: gr.Tabs(selected=0), outputs=tabs)
@@ -100,6 +137,34 @@ class NovelVideoApp:
             nav_settings.click(fn=lambda: gr.Tabs(selected=5), outputs=tabs)
             nav_tasks.click(fn=lambda: gr.Tabs(selected=6), outputs=tabs)
             nav_editor.click(fn=lambda: gr.Tabs(selected=7), outputs=tabs)
+
+            # 全局项目切换事件 - 刷新所有Tab
+            self.global_project_selector.change(
+                fn=self.switch_project_and_refresh_all,
+                inputs=[self.global_project_selector],
+                outputs=[
+                    # 状态栏
+                    self.global_project_status,
+                    # 项目Tab
+                    self.tab_project.project_info,
+                    # 分镜Tab
+                    self.tab_storyboard.sortable_scene_list,
+                    self.tab_storyboard.scene_list,
+                    self.tab_storyboard.scene_order_state,
+                    self.tab_storyboard.filter_result_info,
+                    self.tab_storyboard.filter_chapter,
+                    self.tab_storyboard.scene_selector,
+                    # 角色Tab
+                    self.tab_characters.char_list,
+                    # 预览Tab
+                    self.tab_preview.scene_selector,
+                    self.tab_preview.chapter_selector,
+                ],
+            )
+            self.global_refresh_btn.click(
+                fn=lambda: gr.update(choices=self.get_project_list()),
+                outputs=[self.global_project_selector],
+            )
 
         return app
 
@@ -129,8 +194,17 @@ class NovelVideoApp:
 
             if novel_file:
                 novel_path = project_path / "input" / "novel.txt"
-                with open(novel_path, "wb") as f:
-                    f.write(novel_file)
+                # Gradio 6.0 返回文件路径字符串或 NamedString
+                if hasattr(novel_file, 'name'):
+                    # 文件对象，读取路径
+                    source_path = novel_file.name
+                else:
+                    # 直接是路径字符串
+                    source_path = str(novel_file)
+                
+                # 复制文件内容
+                import shutil
+                shutil.copy(source_path, novel_path)
 
             project_config = {
                 "project": {"name": name},
@@ -179,6 +253,88 @@ class NovelVideoApp:
             info["progress"] = state.get_progress()
 
         return info
+
+    def switch_project_global(self, project_name: str) -> str:
+        """全局切换项目 - 状态栏使用"""
+        if not project_name:
+            self.current_project = None
+            self.pipeline = None
+            return "未选择项目"
+
+        project_path = Path(self.config.paths.projects_dir) / project_name
+        if not project_path.exists():
+            return f"❌ 项目不存在: {project_name}"
+
+        self.current_project = project_path
+        self.pipeline = PipelineController(project_path, self.config)
+
+        # 构建状态信息
+        has_storyboard = (project_path / "storyboard.json").exists()
+        has_characters = (project_path / "characters.json").exists()
+        
+        scene_count = 0
+        if has_storyboard:
+            storyboard = load_json(project_path / "storyboard.json")
+            scene_count = len(storyboard.get("scenes", []))
+        
+        status_parts = [f"📁 **{project_name}**"]
+        if scene_count > 0:
+            status_parts.append(f"🎬 {scene_count}个场景")
+        if has_characters:
+            status_parts.append("👤 已有角色")
+        
+        return " | ".join(status_parts)
+
+    def switch_project_and_refresh_all(self, project_name: str) -> Tuple:
+        """全局切换项目并刷新所有Tab数据"""
+        # 先执行项目切换
+        status_text = self.switch_project_global(project_name)
+        
+        if not project_name or not self.current_project:
+            # 未选择项目，返回空数据
+            return (
+                status_text,  # global_project_status
+                {},  # project_info
+                '<div class="scene-list-empty">请先选择项目</div>',  # sortable_scene_list
+                [],  # scene_list
+                "",  # scene_order_state
+                "",  # filter_result_info
+                gr.update(choices=["全部章节"], value="全部章节"),  # filter_chapter
+                gr.update(choices=[], value=None),  # storyboard scene_selector
+                [],  # char_list
+                gr.update(choices=[]),  # preview scene_selector
+                gr.update(choices=[]),  # preview chapter_selector
+            )
+        
+        # 加载项目信息
+        project_info = self.open_project(project_name)
+        
+        # 加载分镜数据
+        storyboard_html, storyboard_table, scene_order, filter_info, chapter_dropdown = \
+            self.load_scenes_html_with_filter("", "全部", "全部章节")
+        
+        # 提取场景ID列表用于下拉框
+        scene_ids = scene_order.split(",") if scene_order else []
+        
+        # 加载角色数据
+        char_list = self.load_characters()
+        
+        # 加载预览列表
+        preview_scene_update, preview_chapter_update = self.load_preview_lists("单场景")
+        
+        return (
+            status_text,  # global_project_status
+            project_info,  # project_info
+            storyboard_html,  # sortable_scene_list
+            storyboard_table,  # scene_list
+            scene_order,  # scene_order_state
+            filter_info,  # filter_result_info
+            chapter_dropdown,  # filter_chapter
+            gr.update(choices=scene_ids, value=None),  # storyboard scene_selector
+            char_list,  # char_list
+            preview_scene_update,  # preview scene_selector
+            preview_chapter_update,  # preview chapter_selector
+        )
 
     # ============ 分镜管理方法 ============
 
@@ -541,6 +697,54 @@ class NovelVideoApp:
             html_content, table_data, _ = self.load_scenes_html()
             return html_content, table_data, f"保存失败: {e}", order_state
 
+    def load_scene_detail(self, scene_id: str) -> Tuple[str, float, str, str, str, str, Optional[str]]:
+        """加载场景详情到编辑器"""
+        if not self.current_project or not scene_id:
+            return "", 5.0, "", "", "", "static", None
+
+        storyboard_path = self.current_project / "storyboard.json"
+        if not storyboard_path.exists():
+            return "", 5.0, "", "", "", "static", None
+
+        storyboard = load_json(storyboard_path)
+        scene = next((s for s in storyboard.get("scenes", []) if s.get("id") == scene_id), None)
+
+        if not scene:
+            return "", 5.0, "", "", "", "static", None
+
+        # 提取场景数据
+        duration = float(scene.get("duration", 5.0))
+        visual = scene.get("visual", {})
+        description = visual.get("description", "") or ""
+        sd_prompt = visual.get("sd_prompt", "") or ""
+        
+        # 获取对话/旁白 - 优先从 narration 获取，否则从 dialogues 或 subtitle 获取
+        dialogue = ""
+        audio_data = scene.get("audio", {})
+        if audio_data:
+            narration = audio_data.get("narration")
+            if narration and isinstance(narration, dict):
+                dialogue = narration.get("text", "") or ""
+            elif not dialogue:
+                # 尝试从 dialogues 获取
+                dialogues = audio_data.get("dialogues", [])
+                if dialogues and len(dialogues) > 0:
+                    dialogue = dialogues[0].get("text", "") or ""
+        # 如果还是空的，尝试从 subtitle 获取
+        if not dialogue:
+            subtitle = scene.get("subtitle", {})
+            if subtitle and isinstance(subtitle, dict):
+                dialogue = subtitle.get("text", "") or ""
+        
+        # 获取镜头类型，确保返回有效值
+        camera_type = scene.get("visual", {}).get("camera", {}).get("type", "static") or "static"
+
+        # 检查预览图片
+        image_path = self.current_project / "images" / f"{scene_id}.png"
+        preview_image = str(image_path) if image_path.exists() else None
+
+        return scene_id, duration, description, sd_prompt, dialogue, camera_type, preview_image
+
     def save_scene(self, scene_id: str, duration: float, description: str, dialogue: str, camera_type: str) -> List[List[str]]:
         """保存场景修改"""
         if not self.current_project or not scene_id:
@@ -560,6 +764,68 @@ class NovelVideoApp:
 
         save_json(storyboard_path, storyboard)
         return self.load_scenes()
+
+    def regenerate_scene(self, scene_id: str) -> str:
+        """重新生成单个场景的图像（异步任务队列）"""
+        if not self.current_project or not scene_id:
+            return "错误: 请先打开项目并选择场景"
+        
+        # 添加任务到队列
+        import uuid
+        task_id = f"regen_{scene_id}_{uuid.uuid4().hex[:8]}"
+        self.task_queue.add_task(
+            task_id=task_id,
+            name=f"重新生成图像: {scene_id}",
+            task_type="regenerate_image",
+            scene_id=scene_id
+        )
+        self.task_queue.start()
+        
+        self.log_handler.info("Scene", f"已添加场景 {scene_id} 的图像重新生成任务: {task_id}")
+        return f"已添加重新生成任务: {scene_id}"
+
+    def regenerate_scene_sync(self, scene_id: str) -> Tuple[str, Optional[str]]:
+        """同步重新生成单个场景的图像（直接执行，用于编辑后立即生成）"""
+        if not self.current_project or not scene_id:
+            return "错误: 请先打开项目并选择场景", None
+        
+        try:
+            # 加载场景数据
+            storyboard = load_json(self.current_project / "storyboard.json")
+            characters_path = self.current_project / "characters.json"
+            characters = load_json(characters_path) if characters_path.exists() else {"characters": []}
+            
+            scene = next((s for s in storyboard.get("scenes", []) if s.get("id") == scene_id), None)
+            if not scene:
+                return f"场景不存在: {scene_id}", None
+            
+            # 初始化图像生成器
+            from ..image import ComfyUIClient, SceneGenerator
+            comfyui = ComfyUIClient(base_url=self.config.local.comfyui_url)
+            image_gen = SceneGenerator(comfyui)
+            
+            # 生成图像
+            logger.info(f"开始生成场景图像: {scene_id}")
+            image = image_gen.generate_scene(scene, characters, style_preset=self.config.video.style)
+            
+            # 保存图像
+            image_path = self.current_project / "images" / f"{scene_id}.png"
+            ensure_dir(image_path.parent)
+            image.save(image_path)
+            
+            # 更新场景状态
+            for s in storyboard.get("scenes", []):
+                if s.get("id") == scene_id:
+                    s.setdefault("generation_status", {})["image"] = "completed"
+                    break
+            save_json(self.current_project / "storyboard.json", storyboard)
+            
+            logger.info(f"场景图像生成完成: {scene_id}")
+            return f"图像生成成功: {scene_id}", str(image_path)
+            
+        except Exception as e:
+            logger.error(f"场景图像生成失败: {e}")
+            return f"生成失败: {e}", None
 
     # ============ 角色管理方法 ============
 
@@ -776,12 +1042,12 @@ def launch(server_name: str = "127.0.0.1", server_port: int = 7860, share: bool 
     """启动 WebUI"""
     app = NovelVideoApp()
     ui = app.create_ui()
-    # Gradio 6.0: theme, css, js 参数移到 launch()
     ui.launch(
         server_name=server_name,
         server_port=server_port,
         share=share,
         theme=app._theme,
         css=app._css,
-        js=app._js
+        js=app._js,
+        inbrowser=True,
     )

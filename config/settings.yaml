@@ -8,7 +8,7 @@ app:
 video:
   resolution: "1280x720"
   fps: 24
-  style: "anime"  # anime / realistic / illustration
+  style: "realistic_gufeng"  # anime / realistic / illustration / realistic_gufeng
 
 # 本地服务配置
 local:
@@ -16,6 +16,16 @@ local:
   ollama_model: "qwen2.5:14b"
   comfyui_url: "http://localhost:8188"
   cosyvoice_url: "http://localhost:9880"
+
+# 图像生成配置 (Z-Image-Turbo)
+image:
+  model: "z_image_turbo"  # z_image_turbo / sdxl
+  workflow: "z_image_turbo_scene.json"
+  # Z-Image-Turbo 参数 (8步快速生成，无需负向提示词)
+  steps: 4
+  cfg: 1
+  sampler: "res_multistep"
+  scheduler: "simple"
 
 # API配置
 api:

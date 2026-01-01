@@ -1,35 +1,86 @@
-========================================
-    Novel2Video - Web UI
-========================================
-
-Checking environment...
-
-[OK] FFmpeg installed - project
-[OK] PyTorch installed
-
-========================================
-Starting Web UI...
-Browser: http://127.0.0.1:7860
-
-Press Ctrl+C to stop
-========================================
-
-🚀 启动Web界面: http://127.0.0.1:7860
-Traceback (most recent call last):
-  File "<frozen runpy>", line 198, in _run_module_as_main
-  File "<frozen runpy>", line 88, in _run_code
-  File "E:\Study\wqaetly\xiaoshuo_video\src\main.py", line 212, in <module>
-    main()
-  File "E:\Study\wqaetly\xiaoshuo_video\src\main.py", line 84, in main
-    cmd_ui(args.host, args.port, args.share)
-  File "E:\Study\wqaetly\xiaoshuo_video\src\main.py", line 177, in cmd_ui
-    launch(server_name=host, server_port=port, share=share)
-  File "E:\Study\wqaetly\xiaoshuo_video\src\webui\app.py", line 780, in launch
-    ui.launch(
-  File "E:\Study\wqaetly\xiaoshuo_video\.venv\Lib\site-packages\gradio\blocks.py", line 2693, in launch
-    ) = http_server.start_server(
-        ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "E:\Study\wqaetly\xiaoshuo_video\.venv\Lib\site-packages\gradio\http_server.py", line 182, in start_server
-    raise OSError(
-OSError: Cannot find empty port in range: 7860-7860. You can specify a different port by setting the GRADIO_SERVER_PORT environment variable or passing the `server_port` parameter to `launch()`.
-Press any key to continue . . .
+(index):1 Denying load of chrome-extension://jnlgamecbpmbajjfhmmmlhejkemejdma/static/js/inpage.js. Resources must be listed in the web_accessible_resources manifest key in order to be loaded by pages outside the extension.
+(index):1  GET http://127.0.0.1:8188/api/userdata/user.css net::ERR_ABORTED 404 (Not Found)
+(index):1  GET http://127.0.0.1:8188/user.css net::ERR_ABORTED 404 (Not Found)
+content.js:1  GET chrome-extension://invalid/ net::ERR_FAILED
+(anonymous) @ content.js:1
+(anonymous) @ content.js:1
+api.ts:424  GET http://127.0.0.1:8188/api/userdata?dir=subgraphs%2F&recurse=true&split=false&full_info=true 404 (Not Found)
+fetchApi @ api.ts:424
+listUserDataFullInfo @ api.ts:1157
+fetchSubgraphs @ subgraphStore.ts:184
+wrappedAction @ pinia.mjs:1405
+setup @ app.ts:761
+await in setup
+(anonymous) @ GraphCanvas.vue:435
+await in (anonymous)
+(anonymous) @ runtime-core.esm-bundler.js:2815
+callWithErrorHandling @ runtime-core.esm-bundler.js:199
+callWithAsyncErrorHandling @ runtime-core.esm-bundler.js:206
+e.__weh.e.__weh @ runtime-core.esm-bundler.js:2795
+flushPostFlushCbs @ runtime-core.esm-bundler.js:385
+flushJobs @ runtime-core.esm-bundler.js:427
+Promise.then
+queueFlush @ runtime-core.esm-bundler.js:322
+queuePostFlushCb @ runtime-core.esm-bundler.js:336
+queueEffectWithSuspense @ runtime-core.esm-bundler.js:7321
+l.scheduler @ runtime-core.esm-bundler.js:6197
+f.scheduler @ reactivity.esm-bundler.js:1830
+trigger @ reactivity.esm-bundler.js:253
+endBatch @ reactivity.esm-bundler.js:311
+notify @ reactivity.esm-bundler.js:597
+trigger @ reactivity.esm-bundler.js:571
+set value @ reactivity.esm-bundler.js:1456
+finalizeNavigation @ vue-router.mjs:3460
+(anonymous) @ vue-router.mjs:3325
+Promise.then
+pushWithRedirect @ vue-router.mjs:3292
+push @ vue-router.mjs:3217
+install @ vue-router.mjs:3659
+use @ runtime-core.esm-bundler.js:3863
+(anonymous) @ main.ts:67
+api.ts:424  GET http://127.0.0.1:8188/api/userdata/comfy.templates.json net::ERR_ABORTED 404 (Not Found)
+fetchApi @ api.ts:424
+getUserData @ api.ts:1084
+load @ nodeTemplates.ts:95
+ManageTemplates @ nodeTemplates.ts:45
+(anonymous) @ nodeTemplates.ts:333
+extensionStore.ts:68 Extension pysssss.SnapToGrid is disabled.
+registerExtension @ extensionStore.ts:68
+wrappedAction @ pinia.mjs:1405
+registerExtension @ extensionService.ts:58
+registerExtension @ app.ts:1634
+(anonymous) @ snapToGrid.js:73
+widgets.js:2 [ComfyUI Notice] "scripts/widgets.js" is an internal module, not part of the public API. Future updates may break this import.
+(anonymous) @ widgets.js:2
+ui.js:2 [ComfyUI Deprecated] Importing from "scripts/ui.js" is deprecated and will be removed in v1.34.
+(anonymous) @ ui.js:2
+extensionStore.ts:68 Extension pysssss.FaviconStatus is disabled.
+registerExtension @ extensionStore.ts:68
+wrappedAction @ pinia.mjs:1405
+registerExtension @ extensionService.ts:58
+registerExtension @ app.ts:1634
+(anonymous) @ faviconStatus.js:7
+pnginfo.js:2 [ComfyUI Notice] "scripts/pnginfo.js" is an internal module, not part of the public API. Future updates may break this import.
+(anonymous) @ pnginfo.js:2
+contextMenuCompat.ts:74 [DEPRECATED] Monkey-patching getCanvasMenuOptions is deprecated. (Extension: "pysssss.GraphArrange")Please use the new context menu API instead.See: https://docs.comfy.org/custom-nodes/js/context-menu-migration
+set @ contextMenuCompat.ts:74
+setup @ graphArrange.js:7
+(anonymous) @ extensionService.ts:183
+invokeExtensionsAsync @ extensionService.ts:175
+setup @ app.ts:861
+contextMenuCompat.ts:74 [DEPRECATED] Monkey-patching getCanvasMenuOptions is deprecated. (Extension: "pysssss.NodeFinder")Please use the new context menu API instead.See: https://docs.comfy.org/custom-nodes/js/context-menu-migration
+set @ contextMenuCompat.ts:74
+setup @ nodeFinder.js:24
+(anonymous) @ extensionService.ts:183
+invokeExtensionsAsync @ extensionService.ts:175
+setup @ app.ts:861
+api.ts:424  GET http://127.0.0.1:8188/api/pysssss/autocomplete net::ERR_ABORTED 404 (Not Found)
+fetchApi @ api.ts:424
+getCustomWords @ autocompleter.js:81
+addCustomWords @ autocompleter.js:90
+setup @ autocompleter.js:574
+(anonymous) @ extensionService.ts:183
+invokeExtensionsAsync @ extensionService.ts:175
+setup @ app.ts:861
+button.js:2 [ComfyUI Deprecated] Importing from "scripts/ui/components/button.js" is deprecated and will be removed in v1.34.
+(anonymous) @ button.js:2

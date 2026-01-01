@@ -15,6 +15,69 @@ def get_custom_css() -> str:
         background: #f8fafc !important;
     }
     
+    /* ========== 全局文字增强 ========== */
+    * {
+        -webkit-font-smoothing: antialiased !important;
+        -moz-osx-font-smoothing: grayscale !important;
+    }
+    /* 只对浅色背景元素设置深色文字 */
+    body, .gradio-container, p, span, div {
+        font-weight: 500 !important;
+    }
+    /* 标签文字加粗 - 强制浅色背景 */
+    label, .label-wrap, .label-wrap span, .gr-input-label, .gr-checkbox-label {
+        color: #334155 !important;
+        font-weight: 600 !important;
+        background: transparent !important;
+    }
+    /* Gradio 标签容器 - 关键修复 */
+    .gr-input-label, .gr-box > label, .gr-form > label,
+    span[data-testid="block-label"], [class*="block-label"],
+    .label-wrap, .label-wrap > span, 
+    div > label, form > label,
+    .svelte-1gfkn6j, .svelte-s1r2yt {
+        background: transparent !important;
+        background-color: transparent !important;
+        color: #334155 !important;
+        font-weight: 600 !important;
+    }
+    /* 标签父容器也要透明 */
+    .gr-input-label span, label span, .label-wrap span {
+        background: transparent !important;
+        background-color: transparent !important;
+    }
+    /* 输入框 - 确保白色背景+深色文字 */
+    input, textarea, select, .gr-textbox textarea, .gr-textbox input {
+        background: #ffffff !important;
+        color: #1e293b !important;
+        font-weight: 500 !important;
+    }
+    /* 占位符文字 */
+    input::placeholder, textarea::placeholder {
+        color: #94a3b8 !important;
+        font-weight: 400 !important;
+    }
+    /* 下拉选项 - 确保白色背景 */
+    option, .gr-dropdown li, [data-testid="dropdown"] li {
+        background: #ffffff !important;
+        color: #1e293b !important;
+        font-weight: 500 !important;
+    }
+    /* 表格 - 确保白色背景 */
+    table, .dataframe, .gr-dataframe {
+        background: #ffffff !important;
+    }
+    th {
+        background: #f1f5f9 !important;
+        color: #334155 !important;
+        font-weight: 700 !important;
+    }
+    td {
+        background: #ffffff !important;
+        color: #1e293b !important;
+        font-weight: 500 !important;
+    }
+    
     /* ========== 标题栏 ========== */
     .app-title {
         padding: 12px 20px !important;
@@ -30,9 +93,113 @@ def get_custom_css() -> str:
         letter-spacing: 0.5px !important;
     }
     
+    /* ========== 全局状态栏 ========== */
+    .global-status-bar {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        padding: 10px 20px !important;
+        margin: 0 !important;
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        gap: 16px !important;
+        box-shadow: 0 2px 12px rgba(102, 126, 234, 0.3) !important;
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 1000 !important;
+        min-height: 48px !important;
+        border: none !important;
+    }
+    /* 状态栏内所有子元素重置 */
+    .global-status-bar > div {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    .app-title-inline {
+        flex: 0 0 auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: transparent !important;
+        border: none !important;
+    }
+    .app-title-inline p {
+        color: #fff !important;
+        margin: 0 !important;
+        font-size: 18px !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.5px !important;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.1) !important;
+        white-space: nowrap !important;
+    }
+
+    .global-project-dropdown {
+        flex: 1 !important;
+        max-width: none !important;
+        background: transparent !important;
+        border: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+    .global-project-dropdown > label,
+    .global-project-dropdown .label-wrap {
+        display: none !important;
+    }
+    .global-project-dropdown > div,
+    .global-project-dropdown .wrap,
+    .global-project-dropdown .container,
+    .global-project-dropdown [class*="wrap"],
+    .global-project-dropdown [class*="container"] {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+    .global-project-dropdown input,
+    .global-project-dropdown .svelte-1gfkn6j {
+        background: rgba(255, 255, 255, 0.95) !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-size: 14px !important;
+        padding: 8px 14px !important;
+        color: #1e293b !important;
+        font-weight: 500 !important;
+        box-shadow: none !important;
+        height: 38px !important;
+    }
+    .global-project-dropdown input::placeholder {
+        color: #64748b !important;
+    }
+    .global-project-dropdown input:focus {
+        outline: none !important;
+        box-shadow: none !important;
+    }
+    .status-bar-btn {
+        flex: 0 0 auto !important;
+        background: rgba(255, 255, 255, 0.2) !important;
+        border: none !important;
+        color: #fff !important;
+        padding: 8px 12px !important;
+        border-radius: 8px !important;
+        font-size: 16px !important;
+        min-width: 40px !important;
+        height: 38px !important;
+        transition: all 0.2s ease !important;
+        box-shadow: none !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    .status-bar-btn:hover {
+        background: rgba(255, 255, 255, 0.35) !important;
+        transform: scale(1.05) !important;
+    }
+    
     /* ========== 主布局 ========== */
     .main-layout {
-        min-height: calc(100vh - 52px) !important;
+        min-height: calc(100vh - 60px) !important;
         gap: 0 !important;
         background: #f8fafc !important;
     }
@@ -41,7 +208,7 @@ def get_custom_css() -> str:
     .sidebar {
         background: #f1f5f9 !important;
         padding: 8px 0 !important;
-        min-height: calc(100vh - 52px) !important;
+        min-height: calc(100vh - 60px) !important;
         max-width: 100px !important;
         min-width: 100px !important;
         border: none !important;
@@ -82,7 +249,7 @@ def get_custom_css() -> str:
     .content-area {
         background: #f8fafc !important;
         padding: 16px 20px !important;
-        min-height: calc(100vh - 52px) !important;
+        min-height: calc(100vh - 60px) !important;
     }
     
     /* ========== 隐藏原生Tab导航 ========== */
@@ -113,7 +280,7 @@ def get_custom_css() -> str:
         padding: 20px !important;
         border: none !important;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 4px 12px rgba(0, 0, 0, 0.03) !important;
-        min-height: calc(100vh - 84px) !important;
+        min-height: calc(100vh - 100px) !important;
     }
     
     /* ========== 标题样式 ========== */
@@ -223,6 +390,195 @@ def get_custom_css() -> str:
         border: 1px solid #e2e8f0 !important;
         border-radius: 10px !important;
         padding: 12px !important;
+    }
+    .json pre, .gr-json pre {
+        background: #f8fafc !important;
+        color: #1e293b !important;
+    }
+
+    /* ========== 强制浅色背景 ========== */
+    .dark, [data-theme="dark"], :root {
+        --body-background-fill: #f8fafc !important;
+        --block-background-fill: #ffffff !important;
+        --input-background-fill: #ffffff !important;
+        --color-background-primary: #ffffff !important;
+        --color-background-secondary: #f8fafc !important;
+        --background-fill-primary: #ffffff !important;
+        --background-fill-secondary: #f8fafc !important;
+        --neutral-50: #f8fafc !important;
+        --neutral-100: #f1f5f9 !important;
+        --neutral-200: #e2e8f0 !important;
+        --neutral-800: #1e293b !important;
+        --neutral-900: #0f172a !important;
+        --body-text-color: #1e293b !important;
+        --block-label-text-color: #334155 !important;
+        --block-title-text-color: #1e293b !important;
+        --input-text-color: #1e293b !important;
+        --checkbox-label-text-color: #1e293b !important;
+        --block-label-background-fill: transparent !important;
+        --block-label-border-color: transparent !important;
+        --input-border-color: #e2e8f0 !important;
+    }
+    /* 全局背景覆盖 */
+    body, .gradio-container, .main, .contain, .wrap, #root, main {
+        background: #f8fafc !important;
+        color: #1e293b !important;
+    }
+    /* 所有块级元素 */
+    .gr-box, .gr-form, .gr-panel, .gr-block, .block, 
+    .form, .panel, [class*="block"], [class*="panel"] {
+        background: #ffffff !important;
+        color: #1e293b !important;
+        border-color: #e2e8f0 !important;
+    }
+    /* 标签 - 关键：强制透明背景 */
+    .gr-input-label, .gr-checkbox-label, label, .label-wrap, .label-wrap span,
+    [class*="label"], span.svelte-1gfkn6j, span[data-testid="block-label"],
+    .block-label, .input-label {
+        color: #334155 !important;
+        background: transparent !important;
+        background-color: transparent !important;
+    }
+    /* 标签内的 span */
+    label span, .label-wrap span, .gr-input-label span {
+        background: transparent !important;
+        background-color: transparent !important;
+        color: #334155 !important;
+    }
+    /* Checkbox 和 Radio */
+    .gr-check-radio, .gr-checkbox, .checkbox, .radio,
+    [class*="checkbox"], [class*="radio"] {
+        background: #ffffff !important;
+        color: #1e293b !important;
+    }
+    /* Group 组件 */
+    .gr-group, .group, div[class*="group"], .svelte-1kyws56 {
+        background: #f8fafc !important;
+        border-color: #e2e8f0 !important;
+    }
+    /* 下拉菜单 */
+    .gr-dropdown, .gr-dropdown .wrap, .gr-dropdown ul, 
+    [data-testid="dropdown"], [data-testid="dropdown"] ul,
+    .dropdown, select, [class*="dropdown"] {
+        background: #ffffff !important;
+        color: #1e293b !important;
+        border-color: #e2e8f0 !important;
+    }
+    .gr-dropdown li:hover, [data-testid="dropdown"] li:hover {
+        background: #f1f5f9 !important;
+    }
+    /* 文本区域和输入框 */
+    textarea, .gr-text-input, input[type="text"], input[type="number"], input[type="password"],
+    .textbox, [class*="textbox"], .svelte-1f354aw {
+        background: #ffffff !important;
+        color: #1e293b !important;
+        border-color: #e2e8f0 !important;
+    }
+    /* Accordion */
+    .gr-accordion, .accordion, div[class*="accordion"], .svelte-kzcjhc {
+        background: #ffffff !important;
+        border-color: #e2e8f0 !important;
+    }
+    .gr-accordion > .label-wrap, .accordion > .label-wrap,
+    .svelte-kzcjhc > .label-wrap {
+        background: #f8fafc !important;
+        color: #1e293b !important;
+    }
+    .gr-accordion .icon, .accordion .icon {
+        color: #64748b !important;
+    }
+    /* 进度条 */
+    .gr-progress-bar, .progress-bar, [class*="progress"] {
+        background: #e2e8f0 !important;
+    }
+    .gr-progress-bar > div, .progress-bar > div {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+    }
+    /* Dataframe 表格 */
+    .gr-dataframe, .dataframe, table, .table-wrap, .svelte-1byz9vf {
+        background: #ffffff !important;
+        color: #1e293b !important;
+    }
+    .gr-dataframe th, .dataframe th, table th, thead th {
+        background: #f1f5f9 !important;
+        color: #334155 !important;
+    }
+    .gr-dataframe td, .dataframe td, table td, tbody td {
+        background: #ffffff !important;
+        color: #1e293b !important;
+    }
+    .gr-dataframe tr:hover td, .dataframe tr:hover td, table tr:hover td {
+        background: #f8fafc !important;
+    }
+    /* Slider 滑块 */
+    .gr-slider, .slider, input[type="range"], [class*="slider"] {
+        background: transparent !important;
+    }
+    .gr-slider .wrap, .slider .wrap {
+        background: #ffffff !important;
+    }
+    /* Number 输入 */
+    .gr-number, .gr-number input, [class*="number"] input {
+        background: #ffffff !important;
+        color: #1e293b !important;
+    }
+    /* Radio 和 Checkbox 组 */
+    .gr-radio, .gr-checkbox-group, .radio-group, .checkbox-group,
+    [class*="radio-group"], [class*="checkbox-group"] {
+        background: #ffffff !important;
+    }
+    .gr-radio label, .gr-checkbox-group label {
+        color: #1e293b !important;
+    }
+    /* File 上传 */
+    .gr-file, .gr-upload, .upload-container, [data-testid="file"],
+    [class*="upload"], [class*="file"] {
+        background: #f8fafc !important;
+        border-color: #e2e8f0 !important;
+    }
+    /* Gallery */
+    .gr-gallery, .gallery, [class*="gallery"] {
+        background: #ffffff !important;
+    }
+    /* Video 和 Image */
+    .gr-video, .gr-image, .video-container, .image-container,
+    [class*="video"], [class*="image"] {
+        background: #f8fafc !important;
+    }
+    /* Markdown */
+    .gr-markdown, .markdown, .prose, [class*="markdown"] {
+        color: #1e293b !important;
+    }
+    .gr-markdown h1, .gr-markdown h2, .gr-markdown h3,
+    .markdown h1, .markdown h2, .markdown h3 {
+        color: #1e293b !important;
+    }
+    /* 状态徽章 */
+    .status-badge {
+        background: #f1f5f9 !important;
+        color: #475569 !important;
+        padding: 4px 8px !important;
+        border-radius: 6px !important;
+    }
+    /* JSON 显示 */
+    .json, .gr-json, [class*="json"] {
+        background: #f8fafc !important;
+        color: #1e293b !important;
+    }
+    .json pre, .gr-json pre {
+        background: #f8fafc !important;
+        color: #1e293b !important;
+    }
+    /* 按钮文字 - 保持对比度 */
+    button.primary, .gr-button.primary {
+        color: #ffffff !important;
+    }
+    button.secondary, .gr-button.secondary {
+        color: #475569 !important;
+        background: #ffffff !important;
+    }
+    button.stop, .gr-button.stop {
+        color: #ffffff !important;
     }
 
     /* ========== 场景列表 ========== */
@@ -428,6 +784,23 @@ def get_drag_sort_js() -> str:
                     if (e.target.classList.contains('scene-drag-handle')) return;
                     container.querySelectorAll('.scene-item').forEach(i => i.classList.remove('selected'));
                     item.classList.add('selected');
+                    
+                    // 同步更新场景选择下拉框
+                    const sceneId = item.getAttribute('data-scene-id');
+                    if (sceneId) {
+                        // 通过 elem_id 精确定位下拉框
+                        const selectorContainer = document.getElementById('scene-selector-dropdown');
+                        if (selectorContainer) {
+                            const input = selectorContainer.querySelector('input');
+                            if (input) {
+                                input.value = sceneId;
+                                input.dispatchEvent(new Event('input', { bubbles: true }));
+                                input.dispatchEvent(new Event('change', { bubbles: true }));
+                                // 触发 blur 以确保 Gradio 捕获变化
+                                input.dispatchEvent(new Event('blur', { bubbles: true }));
+                            }
+                        }
+                    }
                 });
             });
 

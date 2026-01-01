@@ -21,6 +21,7 @@
     "duration": 5.0,
     "visual": {
       "description": "场景的详细视觉描述，包括环境、人物动作、光影等",
+      "sd_prompt": "英文SD提示词，用于图像生成，格式如: 1boy, black hair, white hanfu robe, standing on mountain peak, clouds below, sunrise, dramatic lighting, epic scene, masterpiece, best quality",
       "style_tags": ["风格标签1", "风格标签2"],
       "characters_in_scene": ["char_001"],
       "camera": {
@@ -59,3 +60,5 @@
 - subtitle.style为"narration"或"dialogue"
 - 对话时subtitle.character为说话角色名
 - 确保生成的场景能够连贯地讲述故事
+- 由于使用 Z-Image-Turbo 模型（Qwen词法分析器对中文优化），图像生成将直接使用 description 字段，sd_prompt 字段可省略或留空
+- description 示例: "一位青年剑修立于悬崖之巅，长发随风飘扬，身着月白色云纹广袖长袍。远处群山连绵，云海翻涌，晨曦金光洒落，为其侧脸镀上一层金边。画面气势磅礴，仙气飘渺。"

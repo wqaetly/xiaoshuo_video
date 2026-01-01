@@ -76,6 +76,10 @@ tmp/
 # FFmpeg (项目内置，太大不提交)
 tools/ffmpeg/
 
+# ComfyUI (便携版，太大不提交)
+tools/ComfyUI_windows_portable/
+tools/ComfyUI/
+
 # 日志
 logs/
 *.log

@@ -8,63 +8,85 @@ from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# 默认SDXL工作流模板
+# Z-Image-Turbo 工作流模板 (6B参数高效模型，8步生成)
 DEFAULT_SCENE_WORKFLOW = {
-    "3": {
-        "class_type": "KSampler",
+    "28": {
+        "class_type": "UNETLoader",
         "inputs": {
-            "cfg": 7,
-            "denoise": 1,
-            "latent_image": ["5", 0],
-            "model": ["4", 0],
-            "negative": ["7", 0],
-            "positive": ["6", 0],
-            "sampler_name": "euler",
-            "scheduler": "normal",
-            "seed": 0,
-            "steps": 25
+            "unet_name": "z_image_turbo_bf16.safetensors",
+            "weight_dtype": "default"
         }
     },
-    "4": {
-        "class_type": "CheckpointLoaderSimple",
+    "29": {
+        "class_type": "VAELoader",
         "inputs": {
-            "ckpt_name": "sd_xl_base_1.0.safetensors"
+            "vae_name": "ae.safetensors"
         }
     },
-    "5": {
-        "class_type": "EmptyLatentImage",
+    "30": {
+        "class_type": "CLIPLoader",
         "inputs": {
-            "batch_size": 1,
-            "height": 720,
-            "width": 1280
+            "clip_name": "qwen_3_4b.safetensors",
+            "type": "lumina2",
+            "device": "default"
+        }
+    },
+    "11": {
+        "class_type": "ModelSamplingAuraFlow",
+        "inputs": {
+            "model": ["28", 0],
+            "shift": 3
         }
     },
     "6": {
         "class_type": "CLIPTextEncode",
         "inputs": {
-            "clip": ["4", 1],
+            "clip": ["30", 0],
             "text": "positive prompt"
         }
     },
-    "7": {
-        "class_type": "CLIPTextEncode",
+    "33": {
+        "class_type": "ConditioningZeroOut",
         "inputs": {
-            "clip": ["4", 1],
-            "text": "negative prompt"
+            "conditioning": ["6", 0]
+        }
+    },
+    "5": {
+        "class_type": "EmptySD3LatentImage",
+        "inputs": {
+            "width": 1280,
+            "height": 720,
+            "batch_size": 1
+        }
+    },
+    "3": {
+        "class_type": "KSampler",
+        "inputs": {
+            "model": ["11", 0],
+            "positive": ["6", 0],
+            "negative": ["33", 0],
+            "latent_image": ["5", 0],
+            "seed": 0,
+            "control_after_generate": "randomize",
+            "steps": 4,
+            "cfg": 1,
+            "sampler_name": "res_multistep",
+            "scheduler": "simple",
+            "denoise": 1
         }
     },
     "8": {
         "class_type": "VAEDecode",
         "inputs": {
             "samples": ["3", 0],
-            "vae": ["4", 2]
+            "vae": ["29", 0]
         }
     },
     "9": {
         "class_type": "SaveImage",
         "inputs": {
-            "filename_prefix": "scene",
-            "images": ["8", 0]
+            "images": ["8", 0],
+            "filename_prefix": "scene"
         }
     }
 }
@@ -77,7 +99,7 @@ class SceneGenerator:
         self,
         comfyui_client: ComfyUIClient,
         workflow_path: Optional[Path] = None,
-        default_checkpoint: str = "sd_xl_base_1.0.safetensors"
+        default_checkpoint: str = "z_image_turbo_bf16.safetensors"
     ):
         self.client = comfyui_client
         self.default_checkpoint = default_checkpoint
@@ -129,43 +151,20 @@ class SceneGenerator:
         characters: Dict[str, Any],
         style_preset: str
     ) -> str:
-        """构建正向提示词"""
-        parts = []
-
-        # 风格前缀
-        style_prefix = self._get_style_prefix(style_preset)
-        parts.append(style_prefix)
-
-        # 场景描述
+        """构建正向提示词
+        
+        Z-Image-Turbo 使用 Qwen 词法分析器，对中文（尤其是成语和古诗词）
+        做了专门优化，直接使用中文自然语言描述即可。
+        """
         visual = scene.get("visual", {})
+        
+        # 直接使用场景的中文描述（Z-Image-Turbo 对中文优化更好）
         description = visual.get("description", "")
         if description:
-            parts.append(description)
-
-        # 风格标签
-        style_tags = visual.get("style_tags", [])
-        if style_tags:
-            parts.extend(style_tags)
-
-        # 角色提示词
-        char_prompts = self._get_character_prompts(
-            visual.get("characters_in_scene", []),
-            characters
-        )
-        if char_prompts:
-            parts.append(char_prompts)
-
-        # 镜头信息
-        camera = visual.get("camera", {})
-        camera_prompt = self._get_camera_prompt(camera)
-        if camera_prompt:
-            parts.append(camera_prompt)
-
-        # 质量标签
-        quality_tags = "masterpiece, best quality, highly detailed, 8k"
-        parts.append(quality_tags)
-
-        return ", ".join(parts)
+            return description
+        
+        # 最后回退
+        return "一幅精美的场景画面"
 
     def _build_negative_prompt(self, style_preset: str) -> str:
         """构建负向提示词"""
@@ -182,6 +181,20 @@ class SceneGenerator:
             base_negative.extend(["realistic", "3d render", "photograph"])
         elif style_preset == "realistic":
             base_negative.extend(["anime", "cartoon", "drawing", "illustration"])
+        elif style_preset == "realistic_gufeng":
+            base_negative.extend([
+                "anime", "cartoon", "drawing", "illustration", "comic",
+                "3d render", "cgi", "modern clothing", "western style",
+                "oversaturated", "neon colors", "chibi", "manga"
+            ])
+        elif style_preset in ["chinese_fantasy", "xianxia"]:
+            base_negative.extend([
+                "western fantasy", "medieval armor", "european castle",
+                "modern clothing", "realistic photograph", "3d render",
+                "chibi", "cute style", "frame", "border", "painting frame",
+                "scroll frame", "decorative border", "picture frame",
+                "canvas texture", "paper texture", "traditional painting look"
+            ])
 
         return ", ".join(base_negative)
 
@@ -191,7 +204,9 @@ class SceneGenerator:
             "anime": "anime style, illustration, vibrant colors",
             "realistic": "photorealistic, cinematic lighting, detailed",
             "illustration": "digital illustration, concept art, artistic",
-            "chinese_fantasy": "chinese fantasy, xianxia, oriental style, ethereal"
+            "chinese_fantasy": "chinese xianxia cultivation novel style, wuxia martial arts, immortal cultivator, ancient chinese fantasy world, flowing robes and hanfu, mystical qi energy aura, sword immortal aesthetic, celestial palace background, ink wash painting influence, dramatic lighting, epic scene composition, detailed character design, fantasy landscape with floating mountains, spiritual energy effects, cultivation realm atmosphere",
+            "realistic_gufeng": "realistic chinese ancient style, photorealistic, cinematic lighting, traditional chinese aesthetics, hanfu, ancient china, detailed fabric texture, soft natural lighting, elegant composition, oriental beauty, historical accuracy",
+            "xianxia": "chinese xianxia style, cultivation immortal world, sword cultivator, flying sword, mystical clouds and mist, ancient chinese architecture, flowing white robes, spiritual qi aura, celestial realm, immortal mountain peaks, dramatic pose, epic fantasy scene, detailed face and clothing, cinematic composition"
         }
         return presets.get(style_preset, presets["anime"])
 
@@ -235,19 +250,17 @@ class SceneGenerator:
         seed: Optional[int],
         scene_id: str
     ) -> Dict[str, Any]:
-        """构建完整的工作流"""
+        """构建完整的工作流 (适配 Z-Image-Turbo)"""
         import copy
         import random
 
         workflow = copy.deepcopy(self.base_workflow)
 
-        # 设置提示词
+        # 设置正向提示词 (Z-Image-Turbo 只需要正向提示词，负向通过 ConditioningZeroOut 处理)
         if "6" in workflow:
             workflow["6"]["inputs"]["text"] = positive_prompt
-        if "7" in workflow:
-            workflow["7"]["inputs"]["text"] = negative_prompt
 
-        # 设置图像尺寸
+        # 设置图像尺寸 (使用 EmptySD3LatentImage)
         if "5" in workflow:
             workflow["5"]["inputs"]["width"] = width
             workflow["5"]["inputs"]["height"] = height
@@ -259,10 +272,6 @@ class SceneGenerator:
         # 设置输出文件名
         if "9" in workflow:
             workflow["9"]["inputs"]["filename_prefix"] = scene_id
-
-        # 设置检查点
-        if "4" in workflow:
-            workflow["4"]["inputs"]["ckpt_name"] = self.default_checkpoint
 
         return workflow
 
