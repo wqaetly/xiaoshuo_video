@@ -21,11 +21,23 @@ local:
 image:
   model: "z_image_turbo"  # z_image_turbo / sdxl
   workflow: "z_image_turbo_scene.json"
-  # Z-Image-Turbo 参数 (8步快速生成，无需负向提示词)
+  # Z-Image-Turbo 参数 (4步快速生成，无需负向提示词)
   steps: 4
   cfg: 1
   sampler: "res_multistep"
   scheduler: "simple"
+
+  # IP-Adapter 角色一致性配置
+  ipadapter:
+    enabled: true                                     # 是否启用角色一致性
+    workflow: "z_image_turbo_ipadapter.json"          # IP-Adapter 工作流
+    model: "ip-adapter-plus_sdxl_vit-h.safetensors"   # IP-Adapter 模型
+    clip_vision: "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"  # CLIP Vision 模型
+    weight: 0.8           # IP-Adapter 权重 (0.0-1.0), 值越大角色越一致但可能丢失场景细节
+    noise: 0.0            # 噪声级别
+    weight_type: "standard"  # 权重类型: standard / linear / ease in / ease out
+    start_at: 0.0         # 开始应用的采样步骤比例
+    end_at: 1.0           # 停止应用的采样步骤比例
 
 # API配置
 api:

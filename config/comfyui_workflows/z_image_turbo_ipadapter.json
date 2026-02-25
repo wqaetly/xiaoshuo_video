@@ -1,0 +1,122 @@
+{
+  "_meta": {
+    "title": "Z-Image-Turbo + IP-Adapter 角色一致性工作流",
+    "description": "基于 Z-Image-Turbo 的场景生成工作流，支持通过 IP-Adapter 注入角色参考图实现角色一致性"
+  },
+  "28": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "z_image_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "29": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  },
+  "30": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    }
+  },
+  "11": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": ["28", 0],
+      "shift": 3
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["30", 0],
+      "text": "positive prompt"
+    }
+  },
+  "33": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": ["6", 0]
+    }
+  },
+  "5": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "width": 1280,
+      "height": 720,
+      "batch_size": 1
+    }
+  },
+  "100": {
+    "_comment": "IP-Adapter 模型加载器",
+    "class_type": "IPAdapterModelLoader",
+    "inputs": {
+      "ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors"
+    }
+  },
+  "101": {
+    "_comment": "CLIP Vision 模型加载器 (用于编码参考图)",
+    "class_type": "CLIPVisionLoader",
+    "inputs": {
+      "clip_name": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"
+    }
+  },
+  "102": {
+    "_comment": "加载角色参考图 (运行时动态替换)",
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "character_reference.png"
+    }
+  },
+  "103": {
+    "_comment": "IP-Adapter 应用节点 - 将参考图特征注入到模型",
+    "class_type": "IPAdapterApply",
+    "inputs": {
+      "model": ["11", 0],
+      "ipadapter": ["100", 0],
+      "clip_vision": ["101", 0],
+      "image": ["102", 0],
+      "weight": 0.8,
+      "noise": 0.0,
+      "weight_type": "standard",
+      "start_at": 0.0,
+      "end_at": 1.0
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["103", 0],
+      "positive": ["6", 0],
+      "negative": ["33", 0],
+      "latent_image": ["5", 0],
+      "seed": 0,
+      "control_after_generate": "randomize",
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "res_multistep",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["29", 0]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["8", 0],
+      "filename_prefix": "scene"
+    }
+  }
+}
+

@@ -8,9 +8,9 @@
 
 - **语言**: Python 3.10+
 - **LLM**: Ollama + Qwen2.5
-- **图像生成**: ComfyUI + SDXL
+- **图像生成**: ComfyUI + Z-Image-Turbo (阿里通义6B参数，4步快速生成，中文优化)
 - **视频生成**: 即梦AI / 可灵AI (远端API)
-- **TTS**: CosyVoice
+- **TTS**: CosyVoice / Edge TTS
 - **视频合成**: FFmpeg
 - **Web界面**: Gradio
 

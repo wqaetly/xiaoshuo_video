@@ -49,42 +49,53 @@ class NovelVideoApp:
 
     def create_ui(self) -> gr.Blocks:
         """创建Gradio界面"""
-        # 使用浅色主题
+        # 使用层次感卡片风格主题
         self._theme = gr.themes.Soft(
-            primary_hue="indigo",
+            primary_hue="blue",
             secondary_hue="slate",
             neutral_hue="slate",
+            radius_size="md",
+            spacing_size="md",
         ).set(
-            body_background_fill="#f8fafc",
+            body_background_fill="#f0f4f8",
             block_background_fill="#ffffff",
             block_border_width="1px",
             block_border_color="#e2e8f0",
-            input_background_fill="#ffffff",
-            button_primary_background_fill="linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            input_background_fill="#f8fafc",
+            input_border_color="#e2e8f0",
+            button_primary_background_fill="#3b82f6",
             button_primary_text_color="#ffffff",
+            button_secondary_background_fill="#ffffff",
+            button_secondary_border_color="#e2e8f0",
         )
         self._css = get_custom_css()
         self._js = get_drag_sort_js()
-        
+
         with gr.Blocks(
             title="小说转视频 - 混合方案",
+            theme=self._theme,
+            css=self._css,
+            js=self._js,
             fill_width=True,
         ) as app:
-            # 全局状态栏
-            with gr.Row(elem_classes=["global-status-bar"]):
-                gr.Markdown("📚 小说转视频生成系统", elem_classes=["app-title-inline"])
-                self.global_project_selector = gr.Dropdown(
-                    label="",
-                    choices=self.get_project_list(),
-                    value=None,
-                    interactive=True,
-                    elem_classes=["global-project-dropdown"],
-                    scale=1,
-                    min_width=200,
-                    show_label=False,
-                    allow_custom_value=False,
-                )
-                self.global_refresh_btn = gr.Button("🔄", elem_classes=["status-bar-btn"], scale=0, min_width=44)
+            # 顶部状态栏 - 两行布局
+            with gr.Column(elem_classes=["global-status-bar"]):
+                # 第一行：标题
+                gr.Markdown("● 小说转视频生成系统", elem_classes=["app-title-inline"])
+                # 第二行：下拉框 + 刷新按钮
+                with gr.Row(elem_classes=["status-bar-controls"]):
+                    self.global_project_selector = gr.Dropdown(
+                        label="",
+                        choices=self.get_project_list(),
+                        value=None,
+                        interactive=True,
+                        elem_classes=["global-project-dropdown"],
+                        scale=9,
+                        min_width=200,
+                        show_label=False,
+                        allow_custom_value=False,
+                    )
+                    self.global_refresh_btn = gr.Button("🔄", elem_classes=["status-bar-btn"], scale=1, min_width=36)
                 # 隐藏的状态组件，用于内部状态同步
                 self.global_project_status = gr.Markdown("", visible=False)
 
@@ -145,8 +156,9 @@ class NovelVideoApp:
                 outputs=[
                     # 状态栏
                     self.global_project_status,
-                    # 项目Tab
+                    # 项目Tab（仪表盘）
                     self.tab_project.project_info,
+                    self.tab_project.progress_stats,
                     # 分镜Tab
                     self.tab_storyboard.sortable_scene_list,
                     self.tab_storyboard.scene_list,
@@ -289,12 +301,13 @@ class NovelVideoApp:
         """全局切换项目并刷新所有Tab数据"""
         # 先执行项目切换
         status_text = self.switch_project_global(project_name)
-        
+
         if not project_name or not self.current_project:
             # 未选择项目，返回空数据
             return (
                 status_text,  # global_project_status
                 {},  # project_info
+                {"message": "请先选择项目"},  # progress_stats
                 '<div class="scene-list-empty">请先选择项目</div>',  # sortable_scene_list
                 [],  # scene_list
                 "",  # scene_order_state
@@ -305,26 +318,30 @@ class NovelVideoApp:
                 gr.update(choices=[]),  # preview scene_selector
                 gr.update(choices=[]),  # preview chapter_selector
             )
-        
+
         # 加载项目信息
         project_info = self.open_project(project_name)
-        
+
+        # 加载项目进度统计
+        progress_stats = self._get_project_stats()
+
         # 加载分镜数据
         storyboard_html, storyboard_table, scene_order, filter_info, chapter_dropdown = \
             self.load_scenes_html_with_filter("", "全部", "全部章节")
-        
+
         # 提取场景ID列表用于下拉框
         scene_ids = scene_order.split(",") if scene_order else []
-        
+
         # 加载角色数据
         char_list = self.load_characters()
-        
+
         # 加载预览列表
         preview_scene_update, preview_chapter_update = self.load_preview_lists("单场景")
-        
+
         return (
             status_text,  # global_project_status
             project_info,  # project_info
+            progress_stats,  # progress_stats
             storyboard_html,  # sortable_scene_list
             storyboard_table,  # scene_list
             scene_order,  # scene_order_state
@@ -335,6 +352,37 @@ class NovelVideoApp:
             preview_scene_update,  # preview scene_selector
             preview_chapter_update,  # preview chapter_selector
         )
+
+    def _get_project_stats(self) -> dict:
+        """获取项目进度统计 - 供内部调用"""
+        if not self.current_project:
+            return {"message": "请先选择项目"}
+
+        storyboard_path = self.current_project / "storyboard.json"
+        if not storyboard_path.exists():
+            return {"总场景数": 0, "message": "暂无分镜数据，请先分析小说"}
+
+        storyboard = load_json(storyboard_path)
+        scenes = storyboard.get("scenes", [])
+
+        # 统计各状态数量
+        image_stats = {"pending": 0, "completed": 0, "failed": 0}
+        audio_stats = {"pending": 0, "completed": 0, "failed": 0}
+        video_stats = {"pending": 0, "completed": 0, "failed": 0}
+
+        for scene in scenes:
+            status = scene.get("generation_status", {})
+            for stat_dict, key in [(image_stats, "image"), (audio_stats, "audio"), (video_stats, "video")]:
+                s = status.get(key, "pending")
+                stat_dict[s] = stat_dict.get(s, 0) + 1
+
+        total = len(scenes)
+        return {
+            "总场景数": total,
+            "图像": f"✅{image_stats['completed']} / ⏳{image_stats['pending']} / ❌{image_stats['failed']}",
+            "音频": f"✅{audio_stats['completed']} / ⏳{audio_stats['pending']} / ❌{audio_stats['failed']}",
+            "视频": f"✅{video_stats['completed']} / ⏳{video_stats['pending']} / ❌{video_stats['failed']}",
+        }
 
     # ============ 分镜管理方法 ============
 

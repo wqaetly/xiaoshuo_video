@@ -37,9 +37,9 @@
 | 模块 | 技术 | 部署方式 | 说明 |
 |------|------|----------|------|
 | LLM分镜 | Ollama + Qwen2.5-14B | 本地 | 智能分镜、角色提取 |
-| 图像生成 | ComfyUI + SDXL | 本地 | 场景图、角色设计图 |
+| 图像生成 | ComfyUI + Z-Image-Turbo | 本地 | 场景图、角色设计图 (4步快速生成) |
 | 视频生成 | 即梦AI / 可灵AI | 远端API | 图生视频 |
-| TTS配音 | CosyVoice | 本地 | 语音合成 |
+| TTS配音 | CosyVoice / Edge TTS | 本地 | 语音合成 |
 | 视频合成 | FFmpeg | 本地 | 视频拼接、字幕叠加 |
 
 ## 系统要求
@@ -53,7 +53,7 @@
 | 显卡 | GTX 1060 6GB | RTX 3080 10GB+ |
 | 硬盘 | 50GB可用空间 | 200GB+ SSD |
 
-> **注意**: ComfyUI运行SDXL模型需要至少8GB显存，建议使用NVIDIA显卡。
+> **注意**: ComfyUI运行Z-Image-Turbo模型需要约12GB显存，建议使用RTX 3080及以上显卡。
 
 ### 软件要求
 
@@ -182,24 +182,24 @@ ComfyUI是基于节点的Stable Diffusion图像生成工具。
 
 3. **下载模型**
 
-   需要下载SDXL基础模型放到 `ComfyUI/models/checkpoints/` 目录：
+   使用项目提供的下载脚本获取 Z-Image-Turbo 模型：
 
-   | 模型 | 下载地址 | 说明 |
-   |------|----------|------|
-   | SDXL Base | [Hugging Face](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0) | 必需，约6.5GB |
-   | SDXL Refiner | [Hugging Face](https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0) | 可选，提升细节 |
-
-   **下载命令** (需要安装huggingface-cli):
    ```powershell
-   pip install huggingface_hub
-
-   # 下载SDXL Base模型
-   huggingface-cli download stabilityai/stable-diffusion-xl-base-1.0 sd_xl_base_1.0.safetensors --local-dir ComfyUI/models/checkpoints/
+   # 运行模型下载脚本
+   python scripts/download_z_image_turbo.py
    ```
 
-   **或手动下载**:
-   - 访问 [https://civitai.com/models/101055](https://civitai.com/models/101055) 下载SDXL模型
-   - 将 `.safetensors` 文件放入 `ComfyUI/models/checkpoints/`
+   需要下载的模型文件：
+
+   | 模型 | 目录 | 大小 | 说明 |
+   |------|------|------|------|
+   | z_image_turbo_bf16.safetensors | diffusion_models/ | 约12GB | 扩散模型 |
+   | qwen_3_4b.safetensors | text_encoders/ | 约8GB | Qwen文本编码器 |
+   | ae.safetensors | vae/ | 约335MB | VAE解码器 |
+
+   **手动下载**:
+   - 访问 [https://huggingface.co/Comfy-Org/z_image_turbo](https://huggingface.co/Comfy-Org/z_image_turbo)
+   - 下载 `split_files/` 目录下的三个模型文件到对应的 ComfyUI models 子目录
 
 4. **启动ComfyUI**
    ```powershell
@@ -212,15 +212,20 @@ ComfyUI是基于节点的Stable Diffusion图像生成工具。
    - 打开浏览器访问 [http://localhost:8188](http://localhost:8188)
    - 应看到ComfyUI的节点编辑界面
 
-#### 推荐的额外模型
+#### Z-Image-Turbo 特点
 
-放入对应目录即可使用：
+- **6B参数模型**：阿里通义实验室出品，高效图像生成
+- **4步生成**：比传统SDXL (20-30步) 快5-7倍
+- **中文优化**：Qwen文本编码器，原生支持中文提示词
+- **照片级真实感**：擅长生成高质量真实风格图像
 
-| 类型 | 目录 | 推荐模型 |
-|------|------|----------|
-| VAE | `models/vae/` | sdxl_vae.safetensors |
-| LoRA | `models/loras/` | 各种风格LoRA |
-| ControlNet | `models/controlnet/` | 用于姿态控制 |
+#### 可选的额外模型
+
+| 类型 | 目录 | 用途 |
+|------|------|------|
+| LoRA | `models/loras/` | 各种风格微调 |
+| ControlNet | `models/controlnet/` | 姿态/构图控制 |
+| IP-Adapter | `models/ipadapter/` | 角色一致性 (待实现) |
 
 #### 常见问题
 
@@ -681,8 +686,8 @@ ollama pull qwen2.5:14b
 # 低显存模式启动
 python main.py --lowvram
 
-# 或使用更小的模型
-# 将SDXL替换为SD1.5模型
+# Z-Image-Turbo 需要约12GB显存，确保显卡满足要求
+# 建议使用 RTX 3080 (10GB) 或更高显卡
 ```
 
 ### Q3: CosyVoice安装失败
@@ -733,10 +738,10 @@ python -m src.main run --project "项目名" --resume
 - `config/workflows/scene.json` - 场景图生成工作流
 - `config/workflows/character.json` - 角色设计工作流
 
-### 使用不同的SDXL模型
+### 自定义图像生成模型
 
-1. 下载其他SDXL兼容模型放入 `ComfyUI/models/checkpoints/`
-2. 在 `config/settings.yaml` 中指定模型名称
+1. 默认使用 Z-Image-Turbo，模型文件在 ComfyUI 的 `models/` 子目录
+2. 如需使用其他模型，可修改 `config/comfyui_workflows/` 下的工作流JSON
 
 ---
 

@@ -56,10 +56,46 @@ class PipelineController:
         self._character_extractor = CharacterExtractor(self._llm)
 
         # 图像模块
-        from ..image import ComfyUIClient, SceneGenerator, CharacterDesigner
+        from ..image import ComfyUIClient, SceneGenerator, CharacterDesigner, CharacterReferenceManager
         comfyui = ComfyUIClient(base_url=self.config.local.comfyui_url)
-        self._image_gen = SceneGenerator(comfyui)
+
+        # 初始化角色参考图管理器 (用于 IP-Adapter 角色一致性)
+        self._reference_manager = CharacterReferenceManager(comfyui, self.project_path)
+
+        # 获取 IP-Adapter 配置
+        ipadapter_config = getattr(self.config.image, 'ipadapter', None)
+        ipadapter_enabled = ipadapter_config.enabled if ipadapter_config else False
+
+        # 配置工作流路径
+        workflow_dir = Path("config/comfyui_workflows")
+        base_workflow = workflow_dir / self.config.image.workflow
+        ipadapter_workflow = None
+
+        if ipadapter_enabled and ipadapter_config:
+            ipadapter_workflow_name = getattr(ipadapter_config, 'workflow', 'z_image_turbo_ipadapter.json')
+            ipadapter_workflow = workflow_dir / ipadapter_workflow_name
+
+        # 初始化场景生成器
+        self._image_gen = SceneGenerator(
+            comfyui,
+            workflow_path=base_workflow if base_workflow.exists() else None,
+            ipadapter_workflow_path=ipadapter_workflow if ipadapter_workflow and ipadapter_workflow.exists() else None,
+            reference_manager=self._reference_manager if ipadapter_enabled else None
+        )
+
+        # 配置 IP-Adapter 参数
+        if ipadapter_enabled and ipadapter_config:
+            self._image_gen.configure_ipadapter(
+                weight=getattr(ipadapter_config, 'weight', 0.8),
+                noise=getattr(ipadapter_config, 'noise', 0.0),
+                weight_type=getattr(ipadapter_config, 'weight_type', 'standard'),
+                start_at=getattr(ipadapter_config, 'start_at', 0.0),
+                end_at=getattr(ipadapter_config, 'end_at', 1.0)
+            )
+
+        # 初始化角色设计器
         self._char_designer = CharacterDesigner(comfyui)
+        self._char_designer.reference_manager = self._reference_manager
 
         # TTS模块
         from ..tts import CosyVoiceClient
@@ -247,6 +283,9 @@ class PipelineController:
         total = len(scenes)
         failed_count = 0
         success_count = 0
+
+        # 加载角色参考图 (用于 IP-Adapter 角色一致性)
+        self._load_character_references(characters)
 
         for i, scene in enumerate(scenes):
             scene_id = scene["id"]
@@ -487,6 +526,35 @@ class PipelineController:
 
         return f"{camera_type} camera movement, from {start_frame} to {end_frame}"
 
+    def _load_character_references(self, characters: Dict[str, Any]) -> None:
+        """加载角色参考图到 IP-Adapter 管理器
+
+        从已生成的角色立绘中加载参考图，用于场景生成时的角色一致性控制。
+
+        Args:
+            characters: 角色配置字典
+        """
+        if not hasattr(self, '_reference_manager') or not self._reference_manager:
+            logger.debug("参考图管理器未初始化，跳过加载")
+            return
+
+        ipadapter_config = getattr(self.config.image, 'ipadapter', None)
+        if not ipadapter_config or not ipadapter_config.enabled:
+            logger.debug("IP-Adapter 未启用，跳过加载参考图")
+            return
+
+        # 设置项目目录
+        self._reference_manager.set_project_dir(self.project_path)
+
+        # 从角色配置批量加载参考图
+        char_dir = self.project_path / "characters"
+        loaded = self._reference_manager.load_from_characters_json(characters, char_dir)
+
+        if loaded:
+            logger.info(f"已加载 {len(loaded)} 个角色的参考图用于 IP-Adapter")
+        else:
+            logger.info("未找到可用的角色参考图")
+
     def _save_state(self) -> None:
         """保存状态"""
         if self.state:
@@ -579,16 +647,19 @@ class PipelineController:
         storyboard = load_json(self.project_path / "storyboard.json")
         characters = load_json(self.project_path / "characters.json")
         scenes = storyboard.get("scenes", [])
-        
+
+        # 加载角色参考图 (用于 IP-Adapter 角色一致性)
+        self._load_character_references(characters)
+
         pending_scenes = [
-            s for s in scenes 
+            s for s in scenes
             if not self.state.is_scene_completed(s["id"], "image")
         ]
-        
+
         if not pending_scenes:
             self._report_progress("图像生成", "所有场景图像已生成", 1.0)
             return
-        
+
         total = len(pending_scenes)
         logger.info(f"并行生成 {total} 个场景图像")
         
@@ -704,6 +775,9 @@ class PipelineController:
         storyboard = load_json(self.project_path / "storyboard.json")
         characters = load_json(self.project_path / "characters.json")
         scenes = storyboard.get("scenes", [])
+
+        # 加载角色参考图 (用于 IP-Adapter 角色一致性)
+        self._load_character_references(characters)
 
         tasks = []
         
