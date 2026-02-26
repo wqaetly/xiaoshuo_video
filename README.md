@@ -24,17 +24,12 @@
 
 ## 快速开始
 
-### 1. 安装
-```powershell
-.\setup.bat
-```
-
-### 2. 启动
+### 1. 安装 && 启动
 ```powershell
 .\start_react_webui.bat
 ```
 
-### 3. 访问
+### 2. 访问
 - Web界面: http://localhost:5173
 - API文档: http://localhost:8000/docs
 
