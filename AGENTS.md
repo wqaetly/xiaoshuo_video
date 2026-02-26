@@ -7,12 +7,13 @@
 ## 技术栈
 
 - **语言**: Python 3.10+
-- **LLM**: Ollama + Qwen2.5
+- **LLM**: Ollama + GLM-4-9B
 - **图像生成**: ComfyUI + Z-Image-Turbo (阿里通义6B参数，4步快速生成，中文优化)
 - **视频生成**: 即梦AI / 可灵AI (远端API)
 - **TTS**: CosyVoice / Edge TTS
 - **视频合成**: FFmpeg
-- **Web界面**: Gradio
+- **Web界面**: React + Ant Design + TypeScript
+- **API后端**: FastAPI + WebSocket
 
 ## 项目结构
 
@@ -25,8 +26,22 @@ src/
 ├── compose/      # 视频合成模块 - FFmpeg拼接
 ├── pipeline/     # 流程控制 - 主控制器、状态管理
 ├── utils/        # 工具类
-├── main.py       # CLI入口
-└── webui.py      # Gradio Web界面
+└── main.py       # CLI入口
+
+api/
+├── main.py       # FastAPI 应用入口
+├── models/       # Pydantic 数据模型
+├── routers/      # API 路由
+├── services/     # 业务逻辑服务
+└── websocket/    # WebSocket 实时日志
+
+web/
+├── src/
+│   ├── api/      # API 客户端
+│   ├── pages/    # 页面组件
+│   ├── components/  # 通用组件
+│   └── types/    # TypeScript 类型定义
+└── package.json
 
 config/
 ├── settings.yaml       # 全局配置
@@ -65,9 +80,10 @@ config/
 .\.venv\Scripts\Activate.ps1
 
 # 启动 WebUI
-python -m src.main ui
-# 或
-start_webui.bat
+start_react_webui.bat
+# 或分别启动后端和前端
+uvicorn api.main:app --reload --port 8000  # API 后端
+cd web && npm run dev                       # React 前端
 
 # CLI 使用
 python -m src.main create --name "项目名" --novel "小说路径"
@@ -92,13 +108,13 @@ python -m src.main run --project "项目名" --resume  # 断点续传
 
 ```
 # 先解析库 ID
-resolve-library-id: gradio
+resolve-library-id: fastapi
 
 # 再查询文档
-get-library-docs: /gradio/gradio, topic="Blocks"
+get-library-docs: /tiangolo/fastapi, topic="WebSocket"
 ```
 
-**适用场景**: 查询 Gradio、Pydantic、httpx 等依赖库的 API 文档
+**适用场景**: 查询 FastAPI、React、Ant Design、Pydantic、httpx 等依赖库的 API 文档
 
 ### Codex (代码执行)
 在隔离环境中执行代码任务。

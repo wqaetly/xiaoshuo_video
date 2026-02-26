@@ -13,9 +13,9 @@ class TestOllamaClient:
         """测试客户端初始化"""
         from src.llm.client import OllamaClient
 
-        client = OllamaClient(base_url="http://localhost:11434", model="qwen2.5:14b")
+        client = OllamaClient(base_url="http://localhost:11434", model="glm4:9b")
         assert client.base_url == "http://localhost:11434"
-        assert client.model == "qwen2.5:14b"
+        assert client.model == "glm4:9b"
 
     @patch("src.llm.client.requests.Session")
     def test_check_health_success(self, mock_session_class):

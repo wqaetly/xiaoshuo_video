@@ -37,7 +37,7 @@ Write-Host "`n[5/5] 检查外部服务..." -ForegroundColor Yellow
 $ollamaInstalled = Get-Command ollama -ErrorAction SilentlyContinue
 if ($ollamaInstalled) {
     Write-Host "  Ollama: 已安装" -ForegroundColor Green
-    Write-Host "  提示: 运行 'ollama pull qwen2.5:14b' 下载模型" -ForegroundColor Cyan
+    Write-Host "  提示: 运行 'ollama pull glm4:9b' 下载模型" -ForegroundColor Cyan
 } else {
     Write-Host "  Ollama: 未安装" -ForegroundColor Yellow
     Write-Host "  请从 https://ollama.com/download 安装" -ForegroundColor Cyan

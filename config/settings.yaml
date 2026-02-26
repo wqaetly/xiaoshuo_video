@@ -10,10 +10,26 @@ video:
   fps: 24
   style: "realistic_gufeng"  # anime / realistic / illustration / realistic_gufeng
 
+  # 视频生成方式
+  # provider: "local" - 使用本地 Wan 2.1 模型 (推荐 16GB 显存)
+  # provider: "api" - 使用远端 API (jimeng/kling)
+  provider: "local"  # local / api
+
+  # 本地视频生成配置 (provider: "local" 时使用)
+  local:
+    workflow: "wan2_i2v.json"
+    model: "wan2.1_i2v_480p_bf16.safetensors"  # 可用 GGUF 量化版本
+    video_length: 81          # 默认帧数 (~5秒 @ 16fps)
+    fps: 16                   # 输出帧率
+    width: 832                # 视频宽度
+    height: 480               # 视频高度
+    steps: 30                 # 采样步数
+    cfg: 5.0                  # CFG Scale
+
 # 本地服务配置
 local:
   ollama_url: "http://localhost:11434"
-  ollama_model: "qwen2.5:14b"
+  ollama_model: "glm4:9b"  # GLM-4-9B: 优秀的中文理解能力，适合小说分镜解析
   comfyui_url: "http://localhost:8188"
   cosyvoice_url: "http://localhost:9880"
 
@@ -27,17 +43,30 @@ image:
   sampler: "res_multistep"
   scheduler: "simple"
 
-  # IP-Adapter 角色一致性配置
+  # 角色一致性方案 (二选一)
+  # 方案1: Z-Image-i2L (推荐) - 从参考图即时生成 LoRA，更精准
+  # 方案2: IP-Adapter - 传统图像特征注入，速度更快
+  character_consistency:
+    method: "i2l"  # i2l / ipadapter / none
+
+  # Z-Image-i2L 配置 (method: "i2l" 时使用)
+  i2l:
+    enabled: true
+    workflow: "z_image_i2l.json"
+    lora_strength: 1.0            # LoRA 强度 (0.0-2.0), 值越大角色越一致
+    apply_to_unet: true           # 是否应用到 UNET
+
+  # IP-Adapter 配置 (method: "ipadapter" 时使用, 作为备选方案)
   ipadapter:
-    enabled: true                                     # 是否启用角色一致性
+    enabled: false                                    # 是否启用 (i2l 启用时建议关闭)
     workflow: "z_image_turbo_ipadapter.json"          # IP-Adapter 工作流
     model: "ip-adapter-plus_sdxl_vit-h.safetensors"   # IP-Adapter 模型
     clip_vision: "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"  # CLIP Vision 模型
-    weight: 0.8           # IP-Adapter 权重 (0.0-1.0), 值越大角色越一致但可能丢失场景细节
+    weight: 0.8           # IP-Adapter 权重 (0.0-1.0)
     noise: 0.0            # 噪声级别
-    weight_type: "standard"  # 权重类型: standard / linear / ease in / ease out
-    start_at: 0.0         # 开始应用的采样步骤比例
-    end_at: 1.0           # 停止应用的采样步骤比例
+    weight_type: "standard"
+    start_at: 0.0
+    end_at: 1.0
 
 # API配置
 api:
@@ -51,6 +80,19 @@ generation:
   max_concurrent_tasks: 3
   retry_count: 3
   retry_delay: 5
+
+# 音频处理配置
+audio:
+  # 音频反应效果 (Yvann-Nodes / SaltAI)
+  audio_reactive:
+    enabled: false               # 是否启用音频反应效果
+    sensitivity: 0.7             # 反应灵敏度 (0.0-1.0)
+    frequency_bands: 4           # 频段数量
+
+  # 口型同步 (LatentSync) - 实验性功能
+  lip_sync:
+    enabled: false               # 是否启用口型同步
+    model: "latentsync"          # 模型选择
 
 # 路径配置
 paths:

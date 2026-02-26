@@ -825,7 +825,7 @@ graph TB
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | local.ollama_url | str | http://localhost:11434 | Ollama服务地址 |
-| local.ollama_model | str | qwen2.5:14b | LLM模型名称 |
+| local.ollama_model | str | glm4:9b | LLM模型名称 |
 | local.comfyui_url | str | http://localhost:8188 | ComfyUI服务地址 |
 | local.cosyvoice_url | str | http://localhost:9880 | CosyVoice服务地址 |
 | api.video_provider | str | jimeng | 视频API提供商 |

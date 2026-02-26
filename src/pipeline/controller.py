@@ -59,28 +59,48 @@ class PipelineController:
         from ..image import ComfyUIClient, SceneGenerator, CharacterDesigner, CharacterReferenceManager
         comfyui = ComfyUIClient(base_url=self.config.local.comfyui_url)
 
-        # 初始化角色参考图管理器 (用于 IP-Adapter 角色一致性)
+        # 初始化角色参考图管理器 (用于角色一致性)
         self._reference_manager = CharacterReferenceManager(comfyui, self.project_path)
+
+        # 获取角色一致性配置
+        char_consistency = getattr(self.config.image, 'character_consistency', None)
+        consistency_method = char_consistency.method if char_consistency else "none"
 
         # 获取 IP-Adapter 配置
         ipadapter_config = getattr(self.config.image, 'ipadapter', None)
         ipadapter_enabled = ipadapter_config.enabled if ipadapter_config else False
 
+        # 获取 Z-Image-i2L 配置
+        i2l_config = getattr(self.config.image, 'i2l', None)
+        i2l_enabled = i2l_config.enabled if i2l_config else False
+
         # 配置工作流路径
         workflow_dir = Path("config/comfyui_workflows")
         base_workflow = workflow_dir / self.config.image.workflow
         ipadapter_workflow = None
+        i2l_workflow = None
 
+        # IP-Adapter 工作流
         if ipadapter_enabled and ipadapter_config:
             ipadapter_workflow_name = getattr(ipadapter_config, 'workflow', 'z_image_turbo_ipadapter.json')
             ipadapter_workflow = workflow_dir / ipadapter_workflow_name
+
+        # i2L 工作流
+        if i2l_enabled and i2l_config:
+            i2l_workflow_name = getattr(i2l_config, 'workflow', 'z_image_i2l.json')
+            i2l_workflow = workflow_dir / i2l_workflow_name
+
+        # 决定是否启用参考图管理器
+        use_reference_manager = (consistency_method != "none") and (ipadapter_enabled or i2l_enabled)
 
         # 初始化场景生成器
         self._image_gen = SceneGenerator(
             comfyui,
             workflow_path=base_workflow if base_workflow.exists() else None,
             ipadapter_workflow_path=ipadapter_workflow if ipadapter_workflow and ipadapter_workflow.exists() else None,
-            reference_manager=self._reference_manager if ipadapter_enabled else None
+            i2l_workflow_path=i2l_workflow if i2l_workflow and i2l_workflow.exists() else None,
+            reference_manager=self._reference_manager if use_reference_manager else None,
+            consistency_method=consistency_method
         )
 
         # 配置 IP-Adapter 参数
@@ -93,6 +113,13 @@ class PipelineController:
                 end_at=getattr(ipadapter_config, 'end_at', 1.0)
             )
 
+        # 配置 i2L 参数
+        if i2l_enabled and i2l_config:
+            self._image_gen.configure_i2l(
+                lora_strength=getattr(i2l_config, 'lora_strength', 1.0),
+                apply_to_unet=getattr(i2l_config, 'apply_to_unet', True)
+            )
+
         # 初始化角色设计器
         self._char_designer = CharacterDesigner(comfyui)
         self._char_designer.reference_manager = self._reference_manager
@@ -101,13 +128,35 @@ class PipelineController:
         from ..tts import CosyVoiceClient
         self._tts = CosyVoiceClient(base_url=self.config.local.cosyvoice_url)
 
-        # 视频API模块
-        from ..video import create_video_client
-        if self.config.api.video_api_key:
-            self._video_gen = create_video_client(
-                provider=self.config.api.video_provider,
-                api_key=self.config.api.video_api_key
+        # 视频生成模块
+        video_provider = getattr(self.config.video, 'provider', 'api')
+
+        if video_provider == "local":
+            # 本地视频生成 (Wan 2.1)
+            from ..video import WanLocalVideoGenerator
+            video_local_config = getattr(self.config.video, 'local', None)
+            wan_workflow = None
+
+            if video_local_config:
+                wan_workflow_name = getattr(video_local_config, 'workflow', 'wan2_i2v.json')
+                wan_workflow = workflow_dir / wan_workflow_name
+
+            self._video_gen = WanLocalVideoGenerator(
+                comfyui_client=comfyui,
+                workflow_path=wan_workflow if wan_workflow and wan_workflow.exists() else None,
+                default_video_length=getattr(video_local_config, 'video_length', 81) if video_local_config else 81,
+                default_fps=getattr(video_local_config, 'fps', 16) if video_local_config else 16
             )
+            logger.info("使用本地 Wan 2.1 视频生成")
+        else:
+            # 远端 API 视频生成
+            from ..video import create_video_client
+            if self.config.api.video_api_key:
+                self._video_gen = create_video_client(
+                    provider=self.config.api.video_provider,
+                    api_key=self.config.api.video_api_key
+                )
+                logger.info(f"使用远端 API 视频生成: {self.config.api.video_provider}")
 
         # 合成模块
         from ..compose import VideoComposer

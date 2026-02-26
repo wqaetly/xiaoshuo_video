@@ -160,7 +160,7 @@ def run_checks() -> Dict[str, bool]:
     print_header("Python依赖")
     
     packages = [
-        ("gradio", "gradio"),
+        ("fastapi", "fastapi"),
         ("pydantic", "pydantic"),
         ("requests", "requests"),
         ("PIL", "pillow"),

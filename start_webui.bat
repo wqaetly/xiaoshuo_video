@@ -96,7 +96,7 @@ if !errorlevel! neq 0 (
 )
 
 REM Check key dependencies
-.venv\Scripts\python.exe -c "import gradio, pydantic, requests" 2>nul
+.venv\Scripts\python.exe -c "import fastapi, pydantic, requests" 2>nul
 if !errorlevel! neq 0 (
     echo [Info] Installing missing dependencies...
     .venv\Scripts\pip.exe install -r requirements.txt -q
@@ -323,12 +323,12 @@ if !errorlevel! neq 0 (
         if !errorlevel! equ 0 (
             echo [Info] Qwen model not found, downloading...
             echo        This may take 10-30 minutes depending on network speed...
-            ollama pull qwen2.5:14b
+            ollama pull glm4:9b
             if !errorlevel! equ 0 (
                 echo [OK] Qwen model downloaded successfully
             ) else (
                 echo [Warning] Model download failed, please run manually:
-                echo          ollama pull qwen2.5:14b
+                echo          ollama pull glm4:9b
             )
         )
     )

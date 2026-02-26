@@ -2,6 +2,7 @@
 from .api_client import VideoAPIClient, VideoData, create_video_client
 from .jimeng import JimengClient
 from .kling import KlingClient
+from .wan_local import WanLocalVideoGenerator
 
 __all__ = [
     "VideoAPIClient",
@@ -9,4 +10,5 @@ __all__ = [
     "create_video_client",
     "JimengClient",
     "KlingClient",
+    "WanLocalVideoGenerator",
 ]

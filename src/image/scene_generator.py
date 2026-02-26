@@ -100,9 +100,10 @@ DEFAULT_SCENE_WORKFLOW = {
 class SceneGenerator:
     """场景图像生成器
 
-    支持两种模式:
-    1. 基础模式: 仅使用文本提示词生成场景图像
-    2. IP-Adapter 模式: 结合角色参考图实现角色一致性
+    支持三种角色一致性模式:
+    1. 基础模式 (none): 仅使用文本提示词生成场景图像
+    2. Z-Image-i2L 模式 (i2l): 从参考图即时生成 LoRA 实现角色一致性 (推荐)
+    3. IP-Adapter 模式 (ipadapter): 传统图像特征注入方式
     """
 
     def __init__(
@@ -110,8 +111,10 @@ class SceneGenerator:
         comfyui_client: ComfyUIClient,
         workflow_path: Optional[Path] = None,
         ipadapter_workflow_path: Optional[Path] = None,
+        i2l_workflow_path: Optional[Path] = None,
         default_checkpoint: str = "z_image_turbo_bf16.safetensors",
-        reference_manager: Optional["CharacterReferenceManager"] = None
+        reference_manager: Optional["CharacterReferenceManager"] = None,
+        consistency_method: str = "none"
     ):
         """初始化场景生成器
 
@@ -119,21 +122,31 @@ class SceneGenerator:
             comfyui_client: ComfyUI 客户端
             workflow_path: 基础工作流路径
             ipadapter_workflow_path: IP-Adapter 工作流路径
+            i2l_workflow_path: Z-Image-i2L 工作流路径
             default_checkpoint: 默认模型检查点
             reference_manager: 角色参考图管理器 (启用角色一致性功能)
+            consistency_method: 角色一致性方法 ("i2l" / "ipadapter" / "none")
         """
         self.client = comfyui_client
         self.default_checkpoint = default_checkpoint
         self.reference_manager = reference_manager
+        self.consistency_method = consistency_method  # i2l / ipadapter / none
 
         # IP-Adapter 配置
         self.ipadapter_config = {
-            "enabled": reference_manager is not None,
-            "weight": 0.8,           # IP-Adapter 权重 (0.0-1.0)
-            "noise": 0.0,            # 噪声级别
+            "enabled": consistency_method == "ipadapter" and reference_manager is not None,
+            "weight": 0.8,
+            "noise": 0.0,
             "weight_type": "standard",
             "start_at": 0.0,
             "end_at": 1.0
+        }
+
+        # Z-Image-i2L 配置
+        self.i2l_config = {
+            "enabled": consistency_method == "i2l" and reference_manager is not None,
+            "lora_strength": 1.0,
+            "apply_to_unet": True
         }
 
         # 加载基础工作流
@@ -147,10 +160,30 @@ class SceneGenerator:
         if ipadapter_workflow_path and ipadapter_workflow_path.exists():
             self.ipadapter_workflow = self.client.load_workflow(ipadapter_workflow_path)
 
+        # 加载 Z-Image-i2L 工作流 (如果存在)
+        self.i2l_workflow = None
+        if i2l_workflow_path and i2l_workflow_path.exists():
+            self.i2l_workflow = self.client.load_workflow(i2l_workflow_path)
+
     def set_reference_manager(self, manager: "CharacterReferenceManager") -> None:
         """设置角色参考图管理器"""
         self.reference_manager = manager
-        self.ipadapter_config["enabled"] = True
+        # 根据当前一致性方法启用对应配置
+        if self.consistency_method == "ipadapter":
+            self.ipadapter_config["enabled"] = True
+        elif self.consistency_method == "i2l":
+            self.i2l_config["enabled"] = True
+
+    def set_consistency_method(self, method: str) -> None:
+        """设置角色一致性方法
+
+        Args:
+            method: "i2l" / "ipadapter" / "none"
+        """
+        self.consistency_method = method
+        has_manager = self.reference_manager is not None
+        self.ipadapter_config["enabled"] = (method == "ipadapter" and has_manager)
+        self.i2l_config["enabled"] = (method == "i2l" and has_manager)
 
     def configure_ipadapter(
         self,
@@ -177,6 +210,22 @@ class SceneGenerator:
             "end_at": end_at
         })
 
+    def configure_i2l(
+        self,
+        lora_strength: float = 1.0,
+        apply_to_unet: bool = True
+    ) -> None:
+        """配置 Z-Image-i2L 参数
+
+        Args:
+            lora_strength: LoRA 强度 (0.0-2.0), 值越大角色越一致
+            apply_to_unet: 是否应用到 UNET
+        """
+        self.i2l_config.update({
+            "lora_strength": lora_strength,
+            "apply_to_unet": apply_to_unet
+        })
+
     def generate_scene(
         self,
         scene: Dict[str, Any],
@@ -196,7 +245,7 @@ class SceneGenerator:
             width: 图像宽度
             height: 图像高度
             seed: 随机种子
-            use_ipadapter: 是否使用 IP-Adapter (None=自动判断)
+            use_ipadapter: 是否使用 IP-Adapter (None=自动判断, 兼容旧代码)
 
         Returns:
             生成的 PIL 图像
@@ -214,10 +263,20 @@ class SceneGenerator:
         visual = scene.get("visual", {})
         character_ids = visual.get("characters_in_scene", [])
 
-        # 决定是否使用 IP-Adapter
-        should_use_ipadapter = self._should_use_ipadapter(character_ids, use_ipadapter)
+        # 决定使用哪种角色一致性方法
+        method = self._get_consistency_method(character_ids, use_ipadapter)
 
-        if should_use_ipadapter:
+        if method == "i2l":
+            logger.info(f"场景 {scene_id} 启用 Z-Image-i2L 角色一致性")
+            workflow = self._build_i2l_workflow(
+                positive_prompt=positive_prompt,
+                width=width,
+                height=height,
+                seed=seed,
+                scene_id=scene_id,
+                character_ids=character_ids
+            )
+        elif method == "ipadapter":
             logger.info(f"场景 {scene_id} 启用 IP-Adapter 角色一致性")
             workflow = self._build_ipadapter_workflow(
                 positive_prompt=positive_prompt,
@@ -228,7 +287,7 @@ class SceneGenerator:
                 character_ids=character_ids
             )
         else:
-            # 使用基础工作流
+            # 使用基础工作流 (无角色一致性)
             workflow = self._build_workflow(
                 positive_prompt=positive_prompt,
                 negative_prompt=negative_prompt,
@@ -246,12 +305,62 @@ class SceneGenerator:
         else:
             raise RuntimeError("图像生成失败，未返回图像")
 
+    def _get_consistency_method(
+        self,
+        character_ids: List[str],
+        use_ipadapter: Optional[bool]
+    ) -> str:
+        """获取应该使用的角色一致性方法
+
+        Args:
+            character_ids: 场景中的角色 ID 列表
+            use_ipadapter: 兼容旧接口 (True=ipadapter, False=none, None=自动)
+
+        Returns:
+            方法名: "i2l" / "ipadapter" / "none"
+        """
+        # 兼容旧接口: 如果明确指定了 use_ipadapter
+        if use_ipadapter is not None:
+            if use_ipadapter:
+                return "ipadapter" if self.ipadapter_workflow else "none"
+            return "none"
+
+        # 场景中无角色，不需要一致性
+        if not character_ids:
+            return "none"
+
+        # 无参考图管理器
+        if not self.reference_manager:
+            return "none"
+
+        # 检查是否有任何角色有参考图
+        has_reference = any(
+            self.reference_manager.has_reference(char_id)
+            for char_id in character_ids
+        )
+        if not has_reference:
+            return "none"
+
+        # 根据配置的一致性方法和可用的工作流决定
+        if self.consistency_method == "i2l" and self.i2l_config.get("enabled") and self.i2l_workflow:
+            return "i2l"
+        elif self.consistency_method == "ipadapter" and self.ipadapter_config.get("enabled") and self.ipadapter_workflow:
+            return "ipadapter"
+
+        # 回退: 检查哪个方法可用
+        if self.i2l_workflow and self.i2l_config.get("enabled"):
+            return "i2l"
+        if self.ipadapter_workflow and self.ipadapter_config.get("enabled"):
+            return "ipadapter"
+
+        return "none"
+
     def _should_use_ipadapter(
         self,
         character_ids: List[str],
         use_ipadapter: Optional[bool]
     ) -> bool:
-        """判断是否应该使用 IP-Adapter
+        """判断是否应该使用 IP-Adapter (兼容旧代码)
 
         Args:
             character_ids: 场景中的角色 ID 列表
@@ -260,15 +369,7 @@ class SceneGenerator:
         Returns:
             是否使用 IP-Adapter
         """
-        # 如果明确指定，直接返回
-        if use_ipadapter is not None:
-            return use_ipadapter
-
-        # 自动判断条件:
-        # 1. IP-Adapter 功能已启用
-        # 2. 有 IP-Adapter 工作流
-        # 3. 场景中有角色
-        # 4. 至少有一个角色有参考图
+        return self._get_consistency_method(character_ids, use_ipadapter) == "ipadapter"
         if not self.ipadapter_config.get("enabled", False):
             return False
 
@@ -471,6 +572,99 @@ class SceneGenerator:
         self._inject_character_references(workflow, character_ids)
 
         return workflow
+
+    def _build_i2l_workflow(
+        self,
+        positive_prompt: str,
+        width: int,
+        height: int,
+        seed: Optional[int],
+        scene_id: str,
+        character_ids: List[str]
+    ) -> Dict[str, Any]:
+        """构建带 Z-Image-i2L 的工作流
+
+        Z-Image-i2L 通过从参考图即时生成 LoRA 来实现角色一致性，
+        比 IP-Adapter 更轻量且效果更稳定。
+
+        Args:
+            positive_prompt: 正向提示词
+            width: 图像宽度
+            height: 图像高度
+            seed: 随机种子
+            scene_id: 场景 ID
+            character_ids: 场景中的角色 ID 列表
+
+        Returns:
+            配置好的工作流字典
+        """
+        if not self.i2l_workflow:
+            raise RuntimeError("Z-Image-i2L 工作流未加载")
+
+        workflow = copy.deepcopy(self.i2l_workflow)
+
+        # 设置正向提示词 (节点 6: CLIP Text Encode)
+        if "6" in workflow:
+            workflow["6"]["inputs"]["text"] = positive_prompt
+
+        # 设置图像尺寸 (节点 5: EmptySD3LatentImage)
+        if "5" in workflow:
+            workflow["5"]["inputs"]["width"] = width
+            workflow["5"]["inputs"]["height"] = height
+
+        # 设置种子 (节点 3: KSampler)
+        if "3" in workflow:
+            workflow["3"]["inputs"]["seed"] = seed if seed is not None else random.randint(0, 2**32 - 1)
+
+        # 设置输出文件名 (节点 9: SaveImage)
+        if "9" in workflow:
+            workflow["9"]["inputs"]["filename_prefix"] = scene_id
+
+        # 配置 Z-Image-i2L 参数 (节点 201: ZImageI2L)
+        if "201" in workflow:
+            workflow["201"]["inputs"]["lora_strength"] = self.i2l_config.get("lora_strength", 1.0)
+            workflow["201"]["inputs"]["apply_to_unet"] = self.i2l_config.get("apply_to_unet", True)
+
+        # 注入角色参考图到 LoadImage 节点 (节点 200)
+        self._inject_i2l_reference(workflow, character_ids)
+
+        return workflow
+
+    def _inject_i2l_reference(
+        self,
+        workflow: Dict[str, Any],
+        character_ids: List[str]
+    ) -> None:
+        """注入角色参考图到 i2L 工作流
+
+        Args:
+            workflow: 工作流字典 (会被就地修改)
+            character_ids: 角色 ID 列表
+        """
+        if not self.reference_manager:
+            logger.warning("参考图管理器未设置，跳过 i2L 参考图注入")
+            return
+
+        # 找到第一个有参考图的角色
+        ref_info = None
+        used_char_id = None
+
+        for char_id in character_ids:
+            ref = self.reference_manager.get_reference_info(char_id)
+            if ref:
+                ref_info = ref
+                used_char_id = char_id
+                break
+
+        if not ref_info:
+            logger.warning(f"场景角色 {character_ids} 均无参考图，i2L 将使用默认值")
+            return
+
+        # 更新 LoadImage 节点 (节点 200 用于 i2L)
+        if "200" in workflow:
+            filename = ref_info.get("filename", ref_info.get("comfyui_path", ""))
+            workflow["200"]["inputs"]["image"] = filename
+            logger.info(f"i2L 注入角色 {used_char_id} 的参考图: {filename}")
 
     def _inject_character_references(
         self,

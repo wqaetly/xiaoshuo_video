@@ -1,0 +1,104 @@
+{
+  "_meta": {
+    "title": "Z-Image-i2L 角色一致性工作流",
+    "description": "使用 Z-Image-i2L 从参考图即时生成角色 LoRA，实现角色一致性。无需传统微调，仅需输入参考图即可生成专属 LoRA。",
+    "requires": ["ComfyUI_RH_ZImageI2L"]
+  },
+  "28": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "z_image_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "29": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  },
+  "30": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    }
+  },
+  "11": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": ["28", 0],
+      "shift": 3
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["30", 0],
+      "text": "positive prompt"
+    }
+  },
+  "33": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": ["6", 0]
+    }
+  },
+  "5": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "width": 1280,
+      "height": 720,
+      "batch_size": 1
+    }
+  },
+  "200": {
+    "_comment": "Z-Image-i2L: 加载参考图像用于生成即时 LoRA",
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "character_reference.png"
+    }
+  },
+  "201": {
+    "_comment": "Z-Image-i2L: 从参考图即时反推生成角色 LoRA",
+    "class_type": "ZImageI2L",
+    "inputs": {
+      "image": ["200", 0],
+      "model": ["11", 0],
+      "lora_strength": 1.0,
+      "apply_to_unet": true
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["201", 0],
+      "positive": ["6", 0],
+      "negative": ["33", 0],
+      "latent_image": ["5", 0],
+      "seed": 0,
+      "control_after_generate": "randomize",
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "res_multistep",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["29", 0]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["8", 0],
+      "filename_prefix": "scene"
+    }
+  }
+}
+

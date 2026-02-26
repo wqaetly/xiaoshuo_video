@@ -482,7 +482,7 @@ class NovelToVideoAPI:
     def analyze_novel(self, text: str) -> dict:
         """使用LLM分析小说，生成分镜脚本"""
         response = self.llm_client.chat.completions.create(
-            model="qwen2.5:14b",
+            model="glm4:9b",
             messages=[
                 {"role": "system", "content": "你是专业的分镜师..."},
                 {"role": "user", "content": f"请分析以下小说内容:\n{text}"}

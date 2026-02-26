@@ -126,7 +126,7 @@ def mock_config() -> MagicMock:
     """模拟配置对象"""
     config = MagicMock()
     config.local.ollama_url = "http://localhost:11434"
-    config.local.ollama_model = "qwen2.5:14b"
+    config.local.ollama_model = "glm4:9b"
     config.local.comfyui_url = "http://localhost:8188"
     config.local.cosyvoice_url = "http://localhost:9880"
     config.api.video_provider = "jimeng"

@@ -13,7 +13,7 @@ load_dotenv()
 class LocalConfig(BaseModel):
     """本地服务配置"""
     ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "qwen2.5:14b"
+    ollama_model: str = "glm4:9b"
     comfyui_url: str = "http://localhost:8188"
     cosyvoice_url: str = "http://localhost:9880"
 

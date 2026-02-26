@@ -1,7 +1,7 @@
 local:
   comfyui_url: http://localhost:8188
   cosyvoice_url: http://localhost:9880
-  ollama_model: qwen2.5:14b
+  ollama_model: glm4:9b
   ollama_url: http://localhost:11434
 project:
   name: chunjian
