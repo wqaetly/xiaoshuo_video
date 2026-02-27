@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Callable
 from dataclasses import dataclass, field
 
-from loguru import logger
-
 from src.pipeline import PipelineController
 from src.pipeline.state import Phase, PipelineState
 from src.utils.config import get_config, Config
+from src.utils.logger import get_logger
+
+logger = get_logger("api.generation_service")
 
 
 @dataclass
@@ -40,36 +41,74 @@ class GenerationService:
         # WebSocket 广播回调
         self.on_progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None
 
-    def check_services(self) -> Dict[str, Dict[str, Any]]:
-        """检查本地服务状态"""
+    async def check_services(self) -> Dict[str, Dict[str, Any]]:
+        """检查本地服务状态（并行检查）"""
         import httpx
 
+        ollama_url = self.config.local.ollama_url
+        comfyui_url = self.config.local.comfyui_url
+        cosyvoice_url = getattr(self.config.local, "cosyvoice_url", "http://localhost:9880")
+        ollama_model = self.config.local.ollama_model or "glm4:9b"
+
         services = {
-            "ollama": {
-                "name": "Ollama",
-                "url": self.config.local.ollama_url,
-                "status": "offline",
-            },
-            "comfyui": {
-                "name": "ComfyUI",
-                "url": self.config.local.comfyui_url,
-                "status": "offline",
-            },
-            "cosyvoice": {
-                "name": "CosyVoice",
-                "url": getattr(self.config.local, "cosyvoice_url", "http://localhost:9880"),
-                "status": "offline",
-            },
+            "ollama": {"status": "offline", "model": ""},
+            "comfyui": {"status": "offline", "queue_size": 0},
+            "cosyvoice": {"status": "offline"},
         }
 
-        for key, info in services.items():
-            try:
-                response = httpx.get(info["url"], timeout=3.0)
-                if response.status_code == 200:
-                    services[key]["status"] = "online"
-            except Exception:
-                services[key]["status"] = "offline"
+        logger.debug("开始并行检查本地服务状态...")
 
+        async def check_ollama():
+            """检查 Ollama 服务"""
+            try:
+                async with httpx.AsyncClient(timeout=2.0) as client:
+                    response = await client.get(f"{ollama_url}/api/tags")
+                    if response.status_code == 200:
+                        services["ollama"]["status"] = "online"
+                        services["ollama"]["model"] = ollama_model
+                        logger.info(f"服务 Ollama 在线, 模型: {ollama_model}")
+                    else:
+                        logger.warning(f"服务 Ollama 响应异常 (状态码: {response.status_code})")
+            except Exception as e:
+                logger.warning(f"服务 Ollama 不可用: {e}")
+
+        async def check_comfyui():
+            """检查 ComfyUI 服务"""
+            try:
+                async with httpx.AsyncClient(timeout=2.0) as client:
+                    response = await client.get(f"{comfyui_url}/queue")
+                    if response.status_code == 200:
+                        services["comfyui"]["status"] = "online"
+                        try:
+                            queue_data = response.json()
+                            running = len(queue_data.get("queue_running", []))
+                            pending = len(queue_data.get("queue_pending", []))
+                            services["comfyui"]["queue_size"] = running + pending
+                        except Exception:
+                            pass
+                        logger.info(f"服务 ComfyUI 在线, 队列: {services['comfyui']['queue_size']}")
+                    else:
+                        logger.warning(f"服务 ComfyUI 响应异常 (状态码: {response.status_code})")
+            except Exception as e:
+                logger.warning(f"服务 ComfyUI 不可用: {e}")
+
+        async def check_cosyvoice():
+            """检查 CosyVoice 服务"""
+            try:
+                async with httpx.AsyncClient(timeout=2.0) as client:
+                    response = await client.get(cosyvoice_url)
+                    if response.status_code == 200:
+                        services["cosyvoice"]["status"] = "online"
+                        logger.info("服务 CosyVoice 在线")
+                    else:
+                        logger.warning(f"服务 CosyVoice 响应异常 (状态码: {response.status_code})")
+            except Exception as e:
+                logger.warning(f"服务 CosyVoice 不可用: {e}")
+
+        # 并行执行所有服务检查
+        await asyncio.gather(check_ollama(), check_comfyui(), check_cosyvoice())
+
+        logger.debug(f"服务检查完成: {services}")
         return services
 
     def _get_phase_index(self, phase_value: str) -> int:

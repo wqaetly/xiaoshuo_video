@@ -10,7 +10,6 @@ import {
   Image,
   Spin,
   Empty,
-  message,
   Slider,
   List,
   Tag,
@@ -122,15 +121,15 @@ function PreviewPage() {
                 justifyContent: 'center',
                 marginBottom: 16,
               }}>
-                {currentScene?.video_url ? (
+                {currentScene?.generation_status?.video === 'completed' && currentScene?.video_path ? (
                   <video
-                    src={currentScene.video_url}
+                    src={`/api/media/${currentScene.video_path}`}
                     style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                     controls
                   />
-                ) : currentScene?.image_url ? (
+                ) : currentScene?.generation_status?.image === 'completed' && currentScene?.image_path ? (
                   <Image
-                    src={currentScene.image_url}
+                    src={`/api/media/${currentScene.image_path}`}
                     style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
                     preview={false}
                   />
@@ -163,8 +162,8 @@ function PreviewPage() {
               {/* 当前场景信息 */}
               <Card size="small" style={{ marginTop: 16 }}>
                 <Space direction="vertical" style={{ width: '100%' }}>
-                  <Text strong>场景 #{currentScene?.scene_number}</Text>
-                  <Text type="secondary">{currentScene?.description || currentScene?.narration || '无描述'}</Text>
+                  <Text strong>场景 #{currentScene?.global_index}</Text>
+                  <Text type="secondary">{currentScene?.visual?.description || currentScene?.audio?.narration?.text || '无描述'}</Text>
                 </Space>
               </Card>
             </Card>
@@ -187,9 +186,9 @@ function PreviewPage() {
                     onClick={() => { setCurrentIndex(index); setPlaying(false) }}
                   >
                     <Space>
-                      <Text strong>#{scene.scene_number}</Text>
-                      {scene.video_url && <Tag color="blue">视频</Tag>}
-                      {scene.image_url && !scene.video_url && <Tag color="green">图片</Tag>}
+                      <Text strong>#{scene.global_index}</Text>
+                      {scene.generation_status?.video === 'completed' && <Tag color="blue">视频</Tag>}
+                      {scene.generation_status?.image === 'completed' && scene.generation_status?.video !== 'completed' && <Tag color="green">图片</Tag>}
                     </Space>
                   </List.Item>
                 )}

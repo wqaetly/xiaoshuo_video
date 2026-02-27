@@ -6,10 +6,11 @@ import uuid
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-from loguru import logger
-
 from src.utils.config import get_config, Config
 from src.utils.file_utils import load_json, save_json, ensure_dir
+from src.utils.logger import get_logger
+
+logger = get_logger("api.editor_service")
 
 
 class EditorService:

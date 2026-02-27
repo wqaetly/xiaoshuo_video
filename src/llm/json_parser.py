@@ -54,23 +54,37 @@ def repair_json(json_str: str) -> str:
     """
     if not json_str:
         return json_str
-    
+
+    # 修复双花括号问题 (LLM 有时会输出 {{ }} 而不是 { })
+    # 需要小心不要破坏嵌套结构，只修复开头和结尾的双括号
+    if json_str.startswith('{{') and json_str.endswith('}}'):
+        # 检查是否是 {{...}} 而不是 { {...} }
+        inner = json_str[1:-1]
+        if inner.startswith('{') and inner.endswith('}'):
+            json_str = inner
+
+    # 同样处理双方括号
+    if json_str.startswith('[[') and json_str.endswith(']]'):
+        inner = json_str[1:-1]
+        if inner.startswith('[') and inner.endswith(']'):
+            json_str = inner
+
     json_str = re.sub(r'//.*$', '', json_str, flags=re.MULTILINE)
     json_str = re.sub(r'/\*[\s\S]*?\*/', '', json_str)
-    
+
     json_str = re.sub(r',(\s*[\]}])', r'\1', json_str)
-    
+
     json_str = re.sub(r"(?<!\\)'", '"', json_str)
-    
+
     json_str = re.sub(r'(\w+)(\s*:)', r'"\1"\2', json_str)
     json_str = re.sub(r'"+"', '"', json_str)
-    
+
     json_str = json_str.replace('\n', ' ').replace('\r', ' ')
     json_str = re.sub(r'\s+', ' ', json_str)
-    
+
     json_str = json_str.replace('True', 'true').replace('False', 'false')
     json_str = json_str.replace('None', 'null')
-    
+
     return json_str
 
 

@@ -46,19 +46,65 @@ export interface ProjectStats {
   total_duration: number
 }
 
-// 场景相关类型
+// 场景相关类型 - 匹配后端 api/models/scene.py 的嵌套结构
+export interface CameraInfo {
+  type: string
+  start_frame: string
+  end_frame: string
+}
+
+export interface VisualInfo {
+  description: string
+  sd_prompt?: string
+  style_tags?: string[]
+  characters_in_scene?: string[]
+  camera?: CameraInfo
+}
+
+export interface NarrationInfo {
+  text: string
+  emotion?: string
+}
+
+export interface DialogueInfo {
+  character_id: string
+  text: string
+  emotion?: string
+}
+
+export interface AudioInfo {
+  narration?: NarrationInfo
+  dialogues?: DialogueInfo[]
+  bgm?: string
+  sfx?: string[]
+}
+
+export interface SubtitleInfo {
+  text: string
+  style?: string
+  character?: string | null
+}
+
+export interface GenerationStatus {
+  image: 'pending' | 'generating' | 'completed' | 'error'
+  audio: 'pending' | 'generating' | 'completed' | 'error'
+  video: 'pending' | 'generating' | 'completed' | 'error'
+}
+
 export interface Scene {
   id: string
-  scene_number: number
-  title?: string
-  description?: string
-  narration?: string
-  dialogue?: string
-  image_url?: string
-  video_url?: string
-  audio_url?: string
-  duration?: number
-  status?: 'pending' | 'generating' | 'completed' | 'error'
+  chapter: number
+  sequence: number
+  global_index: number
+  duration: number
+  visual: VisualInfo
+  audio: AudioInfo
+  subtitle: SubtitleInfo
+  generation_status: GenerationStatus
+  // 资源路径（由服务层添加）
+  image_path?: string
+  audio_path?: string
+  video_path?: string
 }
 
 // 角色相关类型 - 匹配后端 api/models/character.py 的结构

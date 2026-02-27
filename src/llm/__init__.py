@@ -26,6 +26,8 @@ from .chapter_splitter import (
     split_chapters,
     chunk_for_llm,
 )
+# Agent 模块
+from .agent import StoryboardAgent, BaseAgent, AgentTool, AgentToolkit
 
 __all__ = [
     "OllamaClient",
@@ -49,4 +51,9 @@ __all__ = [
     "ChapterFormat",
     "split_chapters",
     "chunk_for_llm",
+    # Agent
+    "StoryboardAgent",
+    "BaseAgent",
+    "AgentTool",
+    "AgentToolkit",
 ]

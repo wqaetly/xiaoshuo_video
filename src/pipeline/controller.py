@@ -74,12 +74,23 @@ class PipelineController:
         logger.info("初始化模块...")
 
         # LLM模块
-        from ..llm import OllamaClient, StoryboardGenerator, CharacterExtractor
+        from ..llm import OllamaClient, StoryboardGenerator, CharacterExtractor, StoryboardAgent
         self._llm = OllamaClient(
             base_url=self.config.local.ollama_url,
             model=self.config.local.ollama_model
         )
-        self._storyboard_gen = StoryboardGenerator(self._llm)
+
+        # 根据配置选择分镜生成器
+        use_agent = getattr(self.config.generation, 'use_agent_storyboard', False)
+        if use_agent:
+            agent_max_iter = getattr(self.config.generation, 'agent_max_iterations', 100)
+            self._storyboard_gen = StoryboardAgent(self._llm, max_context_tokens=8000)
+            self._storyboard_gen.max_iterations = agent_max_iter
+            logger.info("使用 Agent 架构生成分镜 (实验性)")
+        else:
+            self._storyboard_gen = StoryboardGenerator(self._llm)
+            logger.info("使用传统线性方式生成分镜")
+
         self._character_extractor = CharacterExtractor(self._llm)
 
         # 图像模块
@@ -223,6 +234,10 @@ class PipelineController:
             logger.info(f"从 {self.state.current_phase.value} 阶段恢复")
         else:
             self.state = PipelineState()
+
+        # 无论是否恢复，都需要初始化模块
+        # 因为模块实例不会被持久化到状态文件中
+        self.init_modules()
 
         try:
             # 根据配置选择并行或串行模式

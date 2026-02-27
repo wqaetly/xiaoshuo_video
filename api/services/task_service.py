@@ -7,9 +7,10 @@ from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 from collections import deque
 
-from loguru import logger
-
 from src.utils.config import get_config, Config
+from src.utils.logger import get_logger
+
+logger = get_logger("api.task_service")
 
 
 @dataclass

@@ -38,25 +38,31 @@ export interface GenerationProgress {
 export const generationApi = {
   // 检查服务状态
   checkServices: (): Promise<ServiceStatus> => {
-    return apiClient.get('/generation/status')
+    return apiClient.get('/generation/services')
   },
 
   // 获取生成进度
   getProgress: (projectName: string): Promise<GenerationProgress> => {
-    return apiClient.get(`/generation/${projectName}/progress`)
+    return apiClient.get(`/generation/progress/${projectName}`)
   },
 
   // 开始生成
   start: (projectName: string, options?: {
-    start_phase?: string
+    phase?: string
     resume?: boolean
   }): Promise<{ task_id: string }> => {
-    return apiClient.post(`/generation/${projectName}/start`, options)
+    return apiClient.post('/generation/start', {
+      project_name: projectName,
+      phase: options?.phase || 'full',
+      resume: options?.resume ?? true,
+    })
   },
 
   // 停止生成
   stop: (projectName: string): Promise<void> => {
-    return apiClient.post(`/generation/${projectName}/stop`)
+    return apiClient.post('/generation/stop', {
+      project_name: projectName,
+    })
   },
 }
 

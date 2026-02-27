@@ -7,8 +7,8 @@ from typing import Optional, Dict, Any
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from loguru import logger
 
+from src.utils.logger import get_logger
 from src.exceptions import (
     XiaoshuoVideoError,
     ServiceUnavailableError,
@@ -21,6 +21,8 @@ from src.exceptions import (
     MissingConfigError,
     InvalidConfigError,
 )
+
+logger = get_logger("api.exceptions")
 
 
 class ErrorResponse(BaseModel):

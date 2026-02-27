@@ -101,3 +101,22 @@ paths:
   projects_dir: "data/projects"
   models_dir: "models"
   temp_dir: "temp"
+
+# 日志配置
+logging:
+  enabled: true               # 是否启用文件日志
+  log_dir: "log"              # 日志目录
+  level: "DEBUG"              # 日志级别: DEBUG / INFO / WARNING / ERROR
+  rotation: "50 MB"           # 日志文件轮转大小
+  retention: "30 days"        # 日志保留时间
+  # 按模块分类日志文件
+  separate_modules: true      # 是否按模块分别记录日志
+  # 模块日志文件名
+  modules:
+    api: "api.log"            # WebUI API 后端日志
+    llm: "llm.log"            # LLM/Ollama 调用日志
+    comfyui: "comfyui.log"    # ComfyUI 图像生成日志
+    tts: "tts.log"            # TTS 语音合成日志
+    video: "video.log"        # 视频生成日志
+    pipeline: "pipeline.log"  # 流程控制日志
+    all: "app.log"            # 全局日志 (所有模块)

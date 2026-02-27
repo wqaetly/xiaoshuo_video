@@ -32,6 +32,14 @@ class LocalConfig(BaseModel):
         default="http://localhost:9880",
         description="CosyVoice TTS 服务地址"
     )
+    ffmpeg_path: str = Field(
+        default="ffmpeg",
+        description="FFmpeg 可执行文件路径"
+    )
+    ffprobe_path: str = Field(
+        default="ffprobe",
+        description="FFprobe 可执行文件路径"
+    )
 
     @field_validator('ollama_url', 'comfyui_url', 'cosyvoice_url')
     @classmethod
@@ -56,6 +64,51 @@ class APIConfig(BaseModel):
         default=True,
         description="是否使用空闲时段（可能更便宜）"
     )
+
+
+class CharacterConsistencyConfig(BaseModel):
+    """角色一致性配置"""
+    method: str = Field(
+        default="i2l",
+        description="角色一致性方案: i2l / ipadapter / none"
+    )
+
+
+class I2LConfig(BaseModel):
+    """Z-Image-i2L 配置"""
+    enabled: bool = Field(default=True, description="是否启用")
+    workflow: str = Field(default="z_image_i2l.json", description="工作流文件")
+    lora_strength: float = Field(default=1.0, ge=0.0, le=2.0, description="LoRA 强度")
+    apply_to_unet: bool = Field(default=True, description="是否应用到 UNET")
+
+
+class IPAdapterConfig(BaseModel):
+    """IP-Adapter 配置"""
+    enabled: bool = Field(default=False, description="是否启用")
+    workflow: str = Field(default="z_image_turbo_ipadapter.json", description="工作流文件")
+    model: str = Field(default="ip-adapter-plus_sdxl_vit-h.safetensors", description="IP-Adapter 模型")
+    clip_vision: str = Field(default="CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors", description="CLIP Vision 模型")
+    weight: float = Field(default=0.8, ge=0.0, le=1.0, description="IP-Adapter 权重")
+    noise: float = Field(default=0.0, ge=0.0, le=1.0, description="噪声级别")
+    weight_type: str = Field(default="standard", description="权重类型")
+    start_at: float = Field(default=0.0, ge=0.0, le=1.0, description="起始位置")
+    end_at: float = Field(default=1.0, ge=0.0, le=1.0, description="结束位置")
+
+
+class ImageConfig(BaseModel):
+    """图像生成配置"""
+    model: str = Field(default="z_image_turbo", description="图像模型: z_image_turbo / sdxl")
+    workflow: str = Field(default="z_image_turbo_scene.json", description="ComfyUI 工作流文件")
+    steps: int = Field(default=4, ge=1, le=100, description="采样步数")
+    cfg: float = Field(default=1.0, ge=0.0, le=30.0, description="CFG Scale")
+    sampler: str = Field(default="res_multistep", description="采样器")
+    scheduler: str = Field(default="simple", description="调度器")
+    character_consistency: CharacterConsistencyConfig = Field(
+        default_factory=CharacterConsistencyConfig,
+        description="角色一致性配置"
+    )
+    i2l: I2LConfig = Field(default_factory=I2LConfig, description="Z-Image-i2L 配置")
+    ipadapter: IPAdapterConfig = Field(default_factory=IPAdapterConfig, description="IP-Adapter 配置")
 
 
 class VideoConfig(BaseModel):
@@ -113,6 +166,16 @@ class GenerationConfig(BaseModel):
         default=True,
         description="是否启用并行执行（图像和音频同时生成）"
     )
+    use_agent_storyboard: bool = Field(
+        default=False,
+        description="是否使用 Agent 架构生成分镜（实验性功能）"
+    )
+    agent_max_iterations: int = Field(
+        default=100,
+        ge=10,
+        le=500,
+        description="Agent 最大迭代次数"
+    )
 
     @model_validator(mode='after')
     def validate_duration_range(self) -> 'GenerationConfig':
@@ -141,6 +204,58 @@ class PathsConfig(BaseModel):
     )
 
 
+class LogModulesConfig(BaseModel):
+    """日志模块文件名配置"""
+    api: str = Field(default="api.log", description="WebUI API 后端日志")
+    llm: str = Field(default="llm.log", description="LLM/Ollama 调用日志")
+    comfyui: str = Field(default="comfyui.log", description="ComfyUI 图像生成日志")
+    tts: str = Field(default="tts.log", description="TTS 语音合成日志")
+    video: str = Field(default="video.log", description="视频生成日志")
+    pipeline: str = Field(default="pipeline.log", description="流程控制日志")
+    all: str = Field(default="app.log", description="全局日志 (所有模块)")
+
+
+class LogConfig(BaseModel):
+    """日志配置"""
+    enabled: bool = Field(
+        default=True,
+        description="是否启用文件日志"
+    )
+    log_dir: str = Field(
+        default="log",
+        description="日志目录"
+    )
+    level: str = Field(
+        default="DEBUG",
+        description="日志级别: DEBUG / INFO / WARNING / ERROR"
+    )
+    rotation: str = Field(
+        default="50 MB",
+        description="日志文件轮转大小"
+    )
+    retention: str = Field(
+        default="30 days",
+        description="日志保留时间"
+    )
+    separate_modules: bool = Field(
+        default=True,
+        description="是否按模块分别记录日志"
+    )
+    modules: LogModulesConfig = Field(
+        default_factory=LogModulesConfig,
+        description="模块日志文件名"
+    )
+
+    @field_validator('level')
+    @classmethod
+    def validate_level(cls, v: str) -> str:
+        """验证日志级别"""
+        valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+        if v.upper() not in valid_levels:
+            raise ValueError(f"无效的日志级别: {v}，可选值: {valid_levels}")
+        return v.upper()
+
+
 class Config(BaseModel):
     """全局配置
 
@@ -148,9 +263,11 @@ class Config(BaseModel):
     """
     local: LocalConfig = Field(default_factory=LocalConfig)
     api: APIConfig = Field(default_factory=APIConfig)
+    image: ImageConfig = Field(default_factory=ImageConfig)
     video: VideoConfig = Field(default_factory=VideoConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
+    logging: LogConfig = Field(default_factory=LogConfig)
 
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "Config":

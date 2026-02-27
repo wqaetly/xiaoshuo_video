@@ -285,6 +285,57 @@ if exist "tools\ComfyUI_windows_portable\ComfyUI\custom_nodes\SaltAI_AudioViz" (
     )
 )
 
+REM ========================================
+REM Check ComfyUI plugin dependencies
+REM ========================================
+echo.
+echo Checking ComfyUI plugin dependencies...
+set COMFY_PYTHON=tools\ComfyUI_windows_portable\python_embeded\python.exe
+
+if exist "%COMFY_PYTHON%" (
+    REM Check OpenCV (required by VideoHelperSuite)
+    %COMFY_PYTHON% -c "import cv2" 2>nul
+    if !errorlevel! neq 0 (
+        echo [Info] Installing OpenCV for VideoHelperSuite...
+        %COMFY_PYTHON% -m pip install opencv-python -q
+        if !errorlevel! equ 0 (
+            echo [OK] OpenCV installed
+        ) else (
+            echo [Warning] OpenCV install failed
+        )
+    ) else (
+        echo [OK] OpenCV available
+    )
+
+    REM Check imageio-ffmpeg (required by VideoHelperSuite)
+    %COMFY_PYTHON% -c "import imageio_ffmpeg" 2>nul
+    if !errorlevel! neq 0 (
+        echo [Info] Installing imageio-ffmpeg for VideoHelperSuite...
+        %COMFY_PYTHON% -m pip install imageio-ffmpeg -q
+        if !errorlevel! equ 0 (
+            echo [OK] imageio-ffmpeg installed
+        ) else (
+            echo [Warning] imageio-ffmpeg install failed
+        )
+    ) else (
+        echo [OK] imageio-ffmpeg available
+    )
+
+    REM Check diffsynth (required by ZImageI2L)
+    %COMFY_PYTHON% -c "import diffsynth" 2>nul
+    if !errorlevel! neq 0 (
+        echo [Info] Installing diffsynth for ZImageI2L...
+        %COMFY_PYTHON% -m pip install diffsynth -q
+        if !errorlevel! equ 0 (
+            echo [OK] diffsynth installed
+        ) else (
+            echo [Warning] diffsynth install failed
+        )
+    ) else (
+        echo [OK] diffsynth available
+    )
+)
+
 REM Start ComfyUI service
 echo Checking ComfyUI service...
 curl -s -o nul -w "" http://localhost:8188/ >nul 2>&1
@@ -380,12 +431,12 @@ if !errorlevel! equ 0 (
 REM ========================================
 REM Step 10: Start React frontend
 REM ========================================
-REM Check if port 5173 is already in use (Vite default)
-netstat -ano | findstr ":5173" | findstr "LISTENING" >nul 2>&1
+REM Check if port 3000 is already in use (configured in vite.config.ts)
+netstat -ano | findstr ":3000" | findstr "LISTENING" >nul 2>&1
 if !errorlevel! equ 0 (
-    echo [OK] Frontend already running on port 5173
+    echo [OK] Frontend already running on port 3000
 ) else (
-    echo [2/2] Starting React frontend ^(port 5173^)...
+    echo [2/2] Starting React frontend ^(port 3000^)...
     start /min "React Frontend" cmd /c "cd /d "%~dp0web" && npm run dev"
     timeout /t 5 /nobreak >nul
     echo       Done
@@ -400,7 +451,7 @@ echo ========================================
 echo   All services started successfully!
 echo ========================================
 echo.
-echo   Frontend:  http://localhost:5173
+echo   Frontend:  http://localhost:3000
 echo   API Docs:  http://localhost:8000/docs
 echo   ComfyUI:   http://localhost:8188
 echo   Ollama:    http://localhost:11434
@@ -414,7 +465,7 @@ timeout /t 5 /nobreak >nul
 
 REM Open browser
 echo Opening browser...
-start "" "http://localhost:5173"
+start "" "http://localhost:3000"
 
 echo.
 echo Press any key to exit ^(services will keep running^)...

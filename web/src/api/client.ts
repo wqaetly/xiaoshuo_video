@@ -130,14 +130,12 @@ export function showApiError(error: unknown, fallbackMessage = '操作失败') {
   if (error instanceof ApiError) {
     if (error.suggestion) {
       // 有排查建议时使用 notification 显示更详细的信息
+      const description = error.detail
+        ? `${error.detail}\n💡 ${error.suggestion}`
+        : `💡 ${error.suggestion}`
       notification.error({
         message: error.message,
-        description: (
-          <>
-            {error.detail && <p>{error.detail}</p>}
-            <p style={{ color: '#1890ff' }}>💡 {error.suggestion}</p>
-          </>
-        ),
+        description: description,
         duration: 6,
       })
     } else {
@@ -151,5 +149,22 @@ export function showApiError(error: unknown, fallbackMessage = '操作失败') {
   }
 }
 
-export default apiClient
+// 扩展 apiClient 添加 FormData 支持
+const apiClientExtended = {
+  get: <T>(url: string, config?: { params?: Record<string, unknown> }): Promise<T> =>
+    apiClient.get(url, config),
+  post: <T>(url: string, data?: unknown): Promise<T> => apiClient.post(url, data),
+  put: <T>(url: string, data?: unknown): Promise<T> => apiClient.put(url, data),
+  delete: <T>(url: string): Promise<T> => apiClient.delete(url),
+  postFormData: <T>(url: string, formData: FormData): Promise<T> =>
+    apiClient.post(url, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  putFormData: <T>(url: string, formData: FormData): Promise<T> =>
+    apiClient.put(url, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+}
+
+export default apiClientExtended
 

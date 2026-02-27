@@ -18,7 +18,9 @@ import {
   Popconfirm,
   Badge,
   Alert,
+  Upload,
 } from 'antd'
+import type { UploadFile } from 'antd/es/upload/interface'
 import {
   EditOutlined,
   DeleteOutlined,
@@ -26,8 +28,10 @@ import {
   ReloadOutlined,
   SyncOutlined,
   ExclamationCircleOutlined,
+  UploadOutlined,
 } from '@ant-design/icons'
 import { sceneApi, InvalidationStatus } from '../api/scenes'
+import { projectApi } from '../api/projects'
 import { showApiError } from '../api/client'
 import type { Scene } from '../types'
 
@@ -43,6 +47,11 @@ function ScenesPage() {
   const [syncing, setSyncing] = useState(false)
   const [invalidationStatus, setInvalidationStatus] = useState<InvalidationStatus | null>(null)
   const [form] = Form.useForm()
+
+  // 更换小说文件相关状态
+  const [updateNovelModalVisible, setUpdateNovelModalVisible] = useState(false)
+  const [uploadFileList, setUploadFileList] = useState<UploadFile[]>([])
+  const [uploading, setUploading] = useState(false)
 
   const fetchScenes = async () => {
     if (!projectName) return
@@ -106,14 +115,31 @@ function ScenesPage() {
 
   const handleEdit = (scene: Scene) => {
     setEditingScene(scene)
-    form.setFieldsValue(scene)
+    // 将嵌套结构展平为表单字段
+    form.setFieldsValue({
+      description: scene.visual?.description || '',
+      narration: scene.audio?.narration?.text || '',
+      dialogue: scene.audio?.dialogues?.map(d => d.text).join('\n') || '',
+      duration: scene.duration,
+    })
     setEditModalVisible(true)
   }
 
-  const handleSave = async (values: Partial<Scene>) => {
+  const handleSave = async (values: Record<string, string | number>) => {
     if (!projectName || !editingScene) return
     try {
-      await sceneApi.update(projectName, editingScene.id, values)
+      // 将表单字段转换回嵌套结构
+      const updateData: Record<string, unknown> = {}
+      if (values.description !== undefined) {
+        updateData.visual = { description: values.description }
+      }
+      if (values.narration !== undefined) {
+        updateData.audio = { narration: { text: values.narration } }
+      }
+      if (values.duration !== undefined) {
+        updateData.duration = values.duration
+      }
+      await sceneApi.update(projectName, editingScene.id, updateData)
       message.success('保存成功，相关资源已标记为待更新')
       setEditModalVisible(false)
       fetchScenes()
@@ -132,6 +158,35 @@ function ScenesPage() {
       fetchScenes()
     } catch (error) {
       showApiError(error, '删除失败')
+    }
+  }
+
+  // 更换小说文件
+  const handleUpdateNovel = async () => {
+    if (!projectName || uploadFileList.length === 0) {
+      message.error('请选择文件')
+      return
+    }
+
+    const file = uploadFileList[0].originFileObj
+    if (!file) {
+      message.error('文件无效，请重新选择')
+      return
+    }
+
+    try {
+      setUploading(true)
+      const result = await projectApi.updateNovel(projectName, file)
+      message.success(result.message || '小说文件已更换')
+      setUpdateNovelModalVisible(false)
+      setUploadFileList([])
+      // 刷新场景列表（应该会清空）
+      fetchScenes()
+      fetchInvalidationStatus()
+    } catch (error) {
+      showApiError(error, '更换小说文件失败')
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -169,6 +224,9 @@ function ScenesPage() {
         <Title level={3} style={{ margin: 0 }}>分镜管理 - {projectName}</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => { fetchScenes(); fetchInvalidationStatus(); }}>刷新</Button>
+          <Button icon={<UploadOutlined />} onClick={() => setUpdateNovelModalVisible(true)}>
+            更换小说
+          </Button>
           {invalidationStatus?.has_invalidated && (
             <Badge count={totalInvalidated} offset={[-5, 5]}>
               <Button
@@ -220,8 +278,8 @@ function ScenesPage() {
             <Col xs={24} sm={12} md={8} lg={6} key={scene.id}>
               <Card
                 cover={
-                  scene.image_url ? (
-                    <Image src={scene.image_url} alt={scene.title} height={160} style={{ objectFit: 'cover' }} />
+                  scene.generation_status?.image === 'completed' && scene.image_path ? (
+                    <Image src={`/api/media/${scene.image_path}`} alt={`场景 ${scene.global_index}`} height={160} style={{ objectFit: 'cover' }} />
                   ) : (
                     <div style={{ height: 160, background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Text type="secondary">暂无图片</Text>
@@ -238,13 +296,13 @@ function ScenesPage() {
                 <Card.Meta
                   title={
                     <Space>
-                      <span>#{scene.scene_number}</span>
-                      {getStatusTag(scene.status)}
+                      <span>#{scene.global_index}</span>
+                      {getStatusTag(scene.generation_status?.image)}
                     </Space>
                   }
                   description={
                     <Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 0 }}>
-                      {scene.description || scene.narration || '无描述'}
+                      {scene.visual?.description || scene.audio?.narration?.text || scene.subtitle?.text || '无描述'}
                     </Paragraph>
                   }
                 />
@@ -255,7 +313,7 @@ function ScenesPage() {
       )}
 
       <Modal
-        title={`编辑场景 #${editingScene?.scene_number}`}
+        title={`编辑场景 #${editingScene?.global_index}`}
         open={editModalVisible}
         onCancel={() => setEditModalVisible(false)}
         footer={null}
@@ -281,6 +339,41 @@ function ScenesPage() {
             </Space>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 更换小说文件模态框 */}
+      <Modal
+        title="更换小说文件"
+        open={updateNovelModalVisible}
+        onCancel={() => {
+          setUpdateNovelModalVisible(false)
+          setUploadFileList([])
+        }}
+        onOk={handleUpdateNovel}
+        confirmLoading={uploading}
+        okText="确认更换"
+        cancelText="取消"
+      >
+        <Alert
+          message="注意"
+          description="更换小说文件后，当前的分镜数据将被清除，需要重新进行分镜分析。"
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+        <Upload.Dragger
+          accept=".txt,.md"
+          maxCount={1}
+          fileList={uploadFileList}
+          onChange={({ fileList }) => setUploadFileList(fileList)}
+          beforeUpload={() => false}
+        >
+          <p className="ant-upload-drag-icon">
+            <UploadOutlined style={{ fontSize: 48, color: '#1890ff' }} />
+          </p>
+          <p className="ant-upload-text">点击或拖拽文件到此区域上传</p>
+          <p className="ant-upload-hint">支持 .txt 或 .md 格式的小说/文本文件</p>
+        </Upload.Dragger>
       </Modal>
     </div>
   )

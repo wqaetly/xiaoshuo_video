@@ -4,7 +4,10 @@
 from pathlib import Path
 from typing import Dict, Any, Optional
 import yaml
-from loguru import logger
+
+from src.utils.logger import get_logger
+
+logger = get_logger("api.settings_service")
 
 
 class SettingsService:

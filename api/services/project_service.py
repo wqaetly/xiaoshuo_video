@@ -10,7 +10,10 @@ import yaml
 
 from src.utils.config import get_config, Config
 from src.utils.file_utils import load_json, save_json, ensure_dir
+from src.utils.logger import get_logger
 from src.pipeline import PipelineState, Phase
+
+logger = get_logger("api.project_service")
 
 
 class ProjectService:
@@ -48,7 +51,12 @@ class ProjectService:
                 try:
                     state = PipelineState.load(state_file)
                     project_info["phase"] = state.current_phase.value
-                    project_info["progress"] = state.get_progress()
+                    # get_progress() 返回字典，提取 phase_progress 作为 float
+                    progress_info = state.get_progress()
+                    if isinstance(progress_info, dict):
+                        project_info["progress"] = progress_info.get("phase_progress", 0.0)
+                    else:
+                        project_info["progress"] = float(progress_info) if progress_info else 0.0
                     project_info["updated_at"] = state.updated_at
                 except Exception:
                     pass
@@ -119,6 +127,7 @@ class ProjectService:
                 status["current_phase"] = state.current_phase.value
                 status["total_scenes"] = state.total_scenes
                 status["completed_scenes"] = state.completed_scenes
+                # get_progress() 返回完整的进度字典
                 status["progress"] = state.get_progress()
                 status["errors"] = state.errors
             except Exception:
@@ -219,6 +228,80 @@ class ProjectService:
 
         shutil.rmtree(project_path)
         return True
+
+    def update_novel(self, name: str, novel_content: bytes) -> Dict[str, Any]:
+        """更新项目的小说源文件
+
+        Args:
+            name: 项目名称
+            novel_content: 新的小说文件内容
+
+        Returns:
+            包含更新信息的字典
+
+        Raises:
+            ValueError: 项目不存在
+        """
+        project_path = self.projects_dir / name
+        if not project_path.exists():
+            raise ValueError(f"项目 {name} 不存在")
+
+        # 保存新的小说文件
+        novel_path = project_path / "input" / "novel.txt"
+        ensure_dir(novel_path.parent)
+        novel_path.write_bytes(novel_content)
+
+        # 更新项目状态 - 重置分析相关的数据
+        # 删除旧的分镜数据，以便重新分析
+        storyboard_path = project_path / "storyboard.json"
+        if storyboard_path.exists():
+            storyboard_path.unlink()
+            logger.info(f"已删除旧的分镜数据: {storyboard_path}")
+
+        # 重置 pipeline 状态
+        state_path = project_path / "pipeline_state.json"
+        if state_path.exists():
+            try:
+                state = PipelineState.load(state_path)
+                state.current_phase = Phase.INIT
+                state.total_scenes = 0
+                state.completed_scenes = {}
+                state.errors = []
+                state.updated_at = datetime.now().isoformat()
+                state.save(state_path)
+                logger.info(f"已重置项目状态: {name}")
+            except Exception as e:
+                logger.warning(f"重置项目状态失败: {e}")
+
+        logger.info(f"项目 {name} 的小说文件已更新")
+
+        return {
+            "name": name,
+            "novel_file": str(novel_path),
+            "updated_at": datetime.now().isoformat(),
+            "reset_storyboard": True,
+        }
+
+    def get_novel_content(self, name: str) -> Optional[str]:
+        """获取项目的小说内容
+
+        Args:
+            name: 项目名称
+
+        Returns:
+            小说内容，如果不存在则返回 None
+        """
+        project_path = self.projects_dir / name
+        novel_path = project_path / "input" / "novel.txt"
+
+        if not novel_path.exists():
+            return None
+
+        try:
+            return novel_path.read_text(encoding="utf-8")
+        except Exception as e:
+            logger.error(f"读取小说文件失败: {e}")
+            return None
 
 
 # 单例模式

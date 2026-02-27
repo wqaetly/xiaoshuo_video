@@ -81,6 +81,7 @@ tools/ComfyUI_windows_portable/
 tools/ComfyUI/
 
 # 日志
+log/
 logs/
 *.log
 

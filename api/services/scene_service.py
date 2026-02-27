@@ -5,11 +5,12 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Set
 from datetime import datetime
 
-from loguru import logger
-
 from src.utils.config import get_config, Config
 from src.utils.file_utils import load_json, save_json, ensure_dir
+from src.utils.logger import get_logger
 from src.pipeline.state import PipelineState
+
+logger = get_logger("api.scene_service")
 
 
 # 定义字段与下游资源的依赖关系
@@ -273,6 +274,7 @@ class SceneService:
     def analyze_novel(self, project_name: str) -> Dict[str, Any]:
         """分析小说生成分镜（调用 Pipeline Controller）"""
         from src.pipeline import PipelineController
+        from src.pipeline.state import Phase
 
         project_path = self.projects_dir / project_name
         if not project_path.exists():
@@ -283,7 +285,7 @@ class SceneService:
             raise ValueError("小说文件不存在")
 
         controller = PipelineController(project_path, self.config)
-        controller.run_phase("analyze")
+        controller.run_phase(Phase.ANALYZE)
 
         # 重新加载分镜
         storyboard = self._load_storyboard(project_name)

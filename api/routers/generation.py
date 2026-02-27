@@ -6,7 +6,9 @@ from typing import List
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 
 from ..models.generation import (
-    ServiceStatus,
+    OllamaServiceStatus,
+    ComfyUIServiceStatus,
+    CosyVoiceServiceStatus,
     ServicesStatusResponse,
     GenerationStartRequest,
     GenerationStopRequest,
@@ -24,11 +26,19 @@ router = APIRouter()
 async def check_services():
     """检查所有服务状态"""
     service = get_generation_service()
-    status = service.check_services()
+    status = await service.check_services()
     return ServicesStatusResponse(
-        ollama=ServiceStatus(**status["ollama"]),
-        comfyui=ServiceStatus(**status["comfyui"]),
-        cosyvoice=ServiceStatus(**status["cosyvoice"]),
+        ollama=OllamaServiceStatus(
+            available=status["ollama"]["status"] == "online",
+            model=status["ollama"].get("model", ""),
+        ),
+        comfyui=ComfyUIServiceStatus(
+            available=status["comfyui"]["status"] == "online",
+            queue_size=status["comfyui"].get("queue_size", 0),
+        ),
+        cosyvoice=CosyVoiceServiceStatus(
+            available=status["cosyvoice"]["status"] == "online",
+        ),
     )
 
 

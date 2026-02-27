@@ -1,16 +1,26 @@
 """
 FastAPI 主应用入口
 """
+import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .routers import projects, scenes, characters, generation, tasks, editor, settings, files
 from .websocket import log_ws
 from .exceptions import register_exception_handlers
+
+# 初始化日志系统 - 必须在其他模块之前
+from src.utils.logger import init_logger_from_config, get_logger
+init_logger_from_config()
+
+# API 模块日志器
+api_logger = get_logger("api.main")
+request_logger = get_logger("api.request")
 
 
 @asynccontextmanager
@@ -20,6 +30,8 @@ async def lifespan(app: FastAPI):
     import asyncio
     from .services.generation_service import get_generation_service
     from .websocket.log_ws import get_connection_manager
+
+    api_logger.info("FastAPI 应用启动中...")
 
     # 设置 WebSocket 广播回调
     generation_service = get_generation_service()
@@ -36,12 +48,14 @@ async def lifespan(app: FastAPI):
                 message=progress_data.get("message", ""),
             ))
         except Exception as e:
-            print(f"WebSocket 广播失败: {e}")
+            api_logger.error(f"WebSocket 广播失败: {e}")
 
     generation_service.on_progress_callback = on_progress_update
 
+    api_logger.info("FastAPI 应用启动完成")
     yield
     # 关闭时清理
+    api_logger.info("FastAPI 应用关闭")
 
 
 def create_app() -> FastAPI:

@@ -9,7 +9,10 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from loguru import logger
+
+from src.utils.logger import get_logger
+
+logger = get_logger("api.files")
 
 router = APIRouter()
 
