@@ -23,6 +23,8 @@ edge-tts>=6.1.0
 tqdm>=4.66
 rich>=13.0
 loguru>=0.7
+filelock>=3.0
+pynvml>=13.0  # GPU 显存监控
 
 # Web API 后端
 fastapi>=0.115.0

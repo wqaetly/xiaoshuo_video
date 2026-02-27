@@ -10,12 +10,36 @@ from fastapi.staticfiles import StaticFiles
 
 from .routers import projects, scenes, characters, generation, tasks, editor, settings, files
 from .websocket import log_ws
+from .exceptions import register_exception_handlers
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时初始化
+    import asyncio
+    from .services.generation_service import get_generation_service
+    from .websocket.log_ws import get_connection_manager
+
+    # 设置 WebSocket 广播回调
+    generation_service = get_generation_service()
+    ws_manager = get_connection_manager()
+
+    def on_progress_update(project_name: str, progress_data: dict):
+        """进度更新时广播到 WebSocket"""
+        try:
+            # 在异步上下文中发送
+            asyncio.create_task(ws_manager.send_progress(
+                phase=progress_data.get("phase", ""),
+                task=progress_data.get("task", ""),
+                progress=progress_data.get("progress", 0.0),
+                message=progress_data.get("message", ""),
+            ))
+        except Exception as e:
+            print(f"WebSocket 广播失败: {e}")
+
+    generation_service.on_progress_callback = on_progress_update
+
     yield
     # 关闭时清理
 
@@ -49,7 +73,10 @@ def create_app() -> FastAPI:
     app.include_router(files.router, prefix="/api/files", tags=["文件管理"])
 
     # WebSocket 路由
-    app.include_router(log_ws.router, prefix="/ws", tags=["WebSocket"])
+    app.include_router(log_ws.router, prefix="/api/ws", tags=["WebSocket"])
+
+    # 注册全局异常处理器
+    register_exception_handlers(app)
 
     # 挂载静态文件服务
     data_dir = Path(__file__).parent.parent / "data"

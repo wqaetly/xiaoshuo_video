@@ -209,3 +209,23 @@ class KlingClient(VideoAPIClient):
         except Exception as e:
             logger.error(f"视频延长失败: {e}")
             raise
+
+    def get_quota(self) -> Dict[str, Any]:
+        """获取可灵账户配额信息"""
+        try:
+            response = self._session.get(
+                f"{self.base_url}/account/quota",
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            # 标准化返回格式
+            return {
+                "available": data.get("remaining", data.get("available", 0)),
+                "used": data.get("used", 0),
+                "total": data.get("total", 0),
+                "unit": "credits"
+            }
+        except Exception as e:
+            logger.warning(f"获取可灵配额失败: {e}")
+            return {}

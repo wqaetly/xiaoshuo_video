@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Generator, Callable
 from .client import OllamaClient
-from .json_parser import parse_json_safe, parse_json_array, repair_json, extract_json_from_text
+from .json_parser import parse_json_safe, parse_json_array, repair_json, extract_json_from_text, parse_with_retry
 from .prompt_manager import get_prompt_with_fallback
 from .chapter_splitter import ChapterSplitter, ContextWindowManager, Chapter
 from ..utils.logger import get_logger
@@ -248,7 +248,7 @@ class StoryboardGenerator:
         previous_scenes_summary: str,
         text_hint: str
     ) -> Optional[Dict[str, Any]]:
-        """生成单个分镜场景"""
+        """生成单个分镜场景（使用智能重试机制）"""
         prompt = get_prompt_with_fallback(
             "generate_single_scene",
             chapter_num=chapter_num,
@@ -262,23 +262,60 @@ class StoryboardGenerator:
             scene_index=scene_index,
             text_hint=text_hint[:200] if text_hint else "（章节开始）"
         )
-        
-        for retry in range(MAX_SCENE_RETRIES):
-            try:
-                response = self.llm.chat(
-                    prompt=prompt,
-                    temperature=0.5,
-                    max_tokens=2048
-                )
-                
-                result = self._parse_single_scene_response(response)
-                if result:
+
+        # 预期的 JSON 格式描述，用于自动纠正
+        expected_schema = """
+{
+  "done": false,  // 或 true 表示章节已完成
+  "scene": {
+    "duration": 5.0,
+    "visual": {
+      "description": "场景画面描述",
+      "style_tags": ["标签1", "标签2"],
+      "characters_in_scene": ["角色ID"],
+      "camera": {"type": "static", "start_frame": "medium_shot", "end_frame": "medium_shot"}
+    },
+    "audio": {
+      "narration": {"text": "旁白内容", "emotion": "neutral"},
+      "dialogues": [{"character_id": "xxx", "text": "对话内容", "emotion": "neutral"}],
+      "bgm": "ambient",
+      "sfx": []
+    },
+    "subtitle": {"text": "字幕内容", "style": "dialogue"}
+  },
+  "covered_text": "该场景覆盖的原文片段"
+}
+"""
+
+        # 定义 LLM 调用函数
+        def llm_call(p: str) -> str:
+            return self.llm.chat(prompt=p, temperature=0.5, max_tokens=2048)
+
+        # 使用智能重试解析
+        parse_result = parse_with_retry(
+            llm_call=llm_call,
+            initial_prompt=prompt,
+            expected_schema_desc=expected_schema,
+            max_retries=MAX_SCENE_RETRIES
+        )
+
+        if parse_result.success and parse_result.data:
+            result = parse_result.data
+
+            # 检查是否完成
+            if result.get("done", False):
+                return {"done": True}
+
+            # 验证场景数据
+            scene = result.get("scene")
+            if scene:
+                validated = self._validate_scenes([scene])
+                if validated:
+                    result["scene"] = validated[0]
                     return result
-                    
-                logger.warning(f"场景{scene_index}解析失败，重试{retry+1}/{MAX_SCENE_RETRIES}")
-            except Exception as e:
-                logger.error(f"场景{scene_index}生成异常: {e}，重试{retry+1}/{MAX_SCENE_RETRIES}")
-        
+
+        # 解析失败，记录错误
+        logger.error(f"场景{scene_index}生成失败: {parse_result.error}")
         return None
 
     def _parse_single_scene_response(self, response: str) -> Optional[Dict[str, Any]]:

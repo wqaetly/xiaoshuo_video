@@ -6,9 +6,11 @@ import torch
 
 from .state import PipelineState, Phase
 from .scheduler import run_parallel_sync, TaskPriority
+from ..exceptions import StopRequestedException
 from ..utils.config import Config, get_config
 from ..utils.logger import get_logger
 from ..utils.file_utils import load_json, save_json, load_yaml, ensure_dir
+from ..utils.gpu_monitor import get_gpu_monitor
 
 logger = get_logger(__name__)
 
@@ -36,11 +38,36 @@ class PipelineController:
         self.on_progress: Optional[Callable[[str, str, float], None]] = None
         self.on_phase_change: Optional[Callable[[Phase], None]] = None
         self.on_error: Optional[Callable[[str, str], None]] = None
-        
+
         # 跳过失败场景选项 (默认开启)
         self.skip_failed_scenes: bool = True
         # 失败阈值 - 失败率超过此值则停止 (0.0-1.0, 默认0.5表示50%)
         self.failure_threshold: float = 0.5
+
+        # 中断控制
+        self._stop_requested: bool = False
+        self._is_running: bool = False
+
+    def request_stop(self) -> None:
+        """请求停止当前任务"""
+        if self._is_running:
+            logger.info("收到停止请求，将在当前场景完成后停止...")
+            self._stop_requested = True
+
+    def is_stop_requested(self) -> bool:
+        """检查是否请求了停止"""
+        return self._stop_requested
+
+    def _check_stop(self) -> bool:
+        """检查点：如果请求停止则抛出异常
+
+        Returns:
+            True 如果应该继续，抛出 StopRequestedException 如果应该停止
+        """
+        if self._stop_requested:
+            logger.info("检测到停止请求，正在优雅停止...")
+            raise StopRequestedException("任务被用户中断")
+        return True
 
     def init_modules(self) -> None:
         """初始化各个模块"""
@@ -186,6 +213,10 @@ class PipelineController:
 
     def run(self, resume: bool = True) -> None:
         """执行完整流程"""
+        # 重置中断状态
+        self._stop_requested = False
+        self._is_running = True
+
         # 加载或创建状态
         if resume and self.state_file.exists():
             self.state = PipelineState.load(self.state_file)
@@ -194,20 +225,39 @@ class PipelineController:
             self.state = PipelineState()
 
         try:
+            # 根据配置选择并行或串行模式
+            use_parallel = getattr(self.config.generation, 'enable_parallel', True)
+
             # 按阶段执行
-            phase_methods = {
-                Phase.INIT: self._phase_init,
-                Phase.ANALYZE: self._phase_analyze,
-                Phase.CHARACTER_DESIGN: self._phase_character_design,
-                Phase.GENERATE_IMAGES: self._phase_generate_images,
-                Phase.GENERATE_AUDIO: self._phase_generate_audio,
-                Phase.GENERATE_VIDEO: self._phase_generate_video,
-                Phase.COMPOSE: self._phase_compose,
-            }
+            if use_parallel:
+                logger.info("使用并行执行模式（图像和音频同时生成）")
+                phase_methods = {
+                    Phase.INIT: self._phase_init,
+                    Phase.ANALYZE: self._phase_analyze,
+                    Phase.CHARACTER_DESIGN: self._phase_character_design,
+                    Phase.GENERATE_IMAGES: self._phase_generate_images_parallel,
+                    Phase.GENERATE_AUDIO: self._phase_generate_audio_parallel,
+                    Phase.GENERATE_VIDEO: self._phase_generate_video,
+                    Phase.COMPOSE: self._phase_compose,
+                }
+            else:
+                logger.info("使用串行执行模式")
+                phase_methods = {
+                    Phase.INIT: self._phase_init,
+                    Phase.ANALYZE: self._phase_analyze,
+                    Phase.CHARACTER_DESIGN: self._phase_character_design,
+                    Phase.GENERATE_IMAGES: self._phase_generate_images,
+                    Phase.GENERATE_AUDIO: self._phase_generate_audio,
+                    Phase.GENERATE_VIDEO: self._phase_generate_video,
+                    Phase.COMPOSE: self._phase_compose,
+                }
 
             for phase in Phase:
                 if phase in [Phase.DONE, Phase.ERROR]:
                     continue
+
+                # 阶段间检查点
+                self._check_stop()
 
                 if self._should_run_phase(phase):
                     self._set_phase(phase)
@@ -218,12 +268,20 @@ class PipelineController:
             logger.info("🎉 视频生成完成!")
             self._report_progress("完成", "视频已生成", 1.0)
 
+        except StopRequestedException:
+            logger.info("任务已被用户停止")
+            self._report_progress(self.state.current_phase.value, "任务已停止", 0.0)
+            self._save_state()
+            # 不设置 ERROR 状态，保持当前状态以便恢复
         except Exception as e:
             logger.error(f"Pipeline执行错误: {e}")
             self.state.add_error(self.state.current_phase.value, None, str(e))
             self._set_phase(Phase.ERROR)
             self._save_state()
             raise
+        finally:
+            # 重置运行状态
+            self._is_running = False
 
     def _should_run_phase(self, phase: Phase) -> bool:
         """判断是否需要执行某阶段"""
@@ -297,6 +355,9 @@ class PipelineController:
         total = len(char_list)
 
         for i, char in enumerate(char_list):
+            # 角色级检查点
+            self._check_stop()
+
             char_id = char["id"]
 
             # 检查是否已完成
@@ -316,6 +377,8 @@ class PipelineController:
                 )
                 self.state.mark_scene_completed(char_id, "character")
                 self._save_state()
+            except StopRequestedException:
+                raise  # 重新抛出中断异常
             except Exception as e:
                 logger.error(f"角色 {char_id} 生成失败: {e}")
                 self.state.add_error("character_design", char_id, str(e))
@@ -332,20 +395,32 @@ class PipelineController:
         total = len(scenes)
         failed_count = 0
         success_count = 0
+        regenerated_count = 0
 
         # 加载角色参考图 (用于 IP-Adapter 角色一致性)
         self._load_character_references(characters)
 
-        for i, scene in enumerate(scenes):
-            scene_id = scene["id"]
+        # 获取失效的场景列表
+        invalidated = set(self.state.get_invalidated_scenes("image"))
+        if invalidated:
+            logger.info(f"检测到 {len(invalidated)} 个失效场景需要重新生成图像")
 
-            if self.state.is_scene_completed(scene_id, "image"):
+        for i, scene in enumerate(scenes):
+            # 场景级检查点
+            self._check_stop()
+
+            scene_id = scene["id"]
+            is_invalidated = scene_id in invalidated
+
+            # 跳过已完成且未失效的场景
+            if self.state.is_scene_completed(scene_id, "image") and not is_invalidated:
                 success_count += 1
                 continue
 
+            action = "重新生成" if is_invalidated else "生成"
             self._report_progress(
                 "图像生成",
-                f"场景 {scene_id} ({i+1}/{total})",
+                f"{action}场景 {scene_id} ({i+1}/{total})",
                 i / total
             )
 
@@ -357,24 +432,34 @@ class PipelineController:
                 )
                 image.save(self.project_path / "images" / f"{scene_id}.png")
                 self.state.mark_scene_completed(scene_id, "image")
+                # 清除失效标记
+                if is_invalidated:
+                    self.state.clear_invalidation(scene_id, "image")
+                    regenerated_count += 1
                 self.state.current_scene_index = i + 1
                 self._save_state()
                 success_count += 1
+            except StopRequestedException:
+                raise  # 重新抛出中断异常
             except Exception as e:
                 failed_count += 1
                 self._handle_scene_error("generate_images", scene_id, e, total, failed_count - 1)
                 self._save_state()
 
         # 报告最终结果
+        result_parts = [f"{success_count}成功"]
+        if regenerated_count > 0:
+            result_parts.append(f"{regenerated_count}重新生成")
         if failed_count > 0:
-            self._report_progress(
-                "图像生成", 
-                f"完成: {success_count}成功, {failed_count}失败 (共{total}个)", 
-                1.0
-            )
+            result_parts.append(f"{failed_count}失败")
+
+        self._report_progress(
+            "图像生成",
+            f"完成: {', '.join(result_parts)} (共{total}个)",
+            1.0
+        )
+        if failed_count > 0:
             logger.warning(f"图像生成阶段: {failed_count}/{total} 个场景失败")
-        else:
-            self._report_progress("图像生成", "场景图像生成完成", 1.0)
 
     def _phase_generate_audio(self) -> None:
         """音频生成阶段"""
@@ -386,17 +471,29 @@ class PipelineController:
         total = len(scenes)
         failed_count = 0
         success_count = 0
+        regenerated_count = 0
+
+        # 获取失效的场景列表
+        invalidated = set(self.state.get_invalidated_scenes("audio"))
+        if invalidated:
+            logger.info(f"检测到 {len(invalidated)} 个失效场景需要重新生成音频")
 
         for i, scene in enumerate(scenes):
-            scene_id = scene["id"]
+            # 场景级检查点
+            self._check_stop()
 
-            if self.state.is_scene_completed(scene_id, "audio"):
+            scene_id = scene["id"]
+            is_invalidated = scene_id in invalidated
+
+            # 跳过已完成且未失效的场景
+            if self.state.is_scene_completed(scene_id, "audio") and not is_invalidated:
                 success_count += 1
                 continue
 
+            action = "重新生成" if is_invalidated else "生成"
             self._report_progress(
                 "音频生成",
-                f"场景 {scene_id} ({i+1}/{total})",
+                f"{action}场景 {scene_id} ({i+1}/{total})",
                 i / total
             )
 
@@ -407,23 +504,33 @@ class PipelineController:
                 )
                 audio_data.save(self.project_path / "audio" / f"{scene_id}.wav")
                 self.state.mark_scene_completed(scene_id, "audio")
+                # 清除失效标记
+                if is_invalidated:
+                    self.state.clear_invalidation(scene_id, "audio")
+                    regenerated_count += 1
                 self._save_state()
                 success_count += 1
+            except StopRequestedException:
+                raise  # 重新抛出中断异常
             except Exception as e:
                 failed_count += 1
                 self._handle_scene_error("generate_audio", scene_id, e, total, failed_count - 1)
                 self._save_state()
 
         # 报告最终结果
+        result_parts = [f"{success_count}成功"]
+        if regenerated_count > 0:
+            result_parts.append(f"{regenerated_count}重新生成")
         if failed_count > 0:
-            self._report_progress(
-                "音频生成", 
-                f"完成: {success_count}成功, {failed_count}失败 (共{total}个)", 
-                1.0
-            )
+            result_parts.append(f"{failed_count}失败")
+
+        self._report_progress(
+            "音频生成",
+            f"完成: {', '.join(result_parts)} (共{total}个)",
+            1.0
+        )
+        if failed_count > 0:
             logger.warning(f"音频生成阶段: {failed_count}/{total} 个场景失败")
-        else:
-            self._report_progress("音频生成", "配音生成完成", 1.0)
 
     def _phase_generate_video(self) -> None:
         """视频生成阶段 (调用远端API)"""
@@ -431,19 +538,50 @@ class PipelineController:
             logger.warning("视频API未配置，跳过视频生成阶段")
             return
 
-        self._report_progress("视频生成", "调用API生成视频片段...", 0.0)
+        self._report_progress("视频生成", "检查 API 配额...", 0.0)
 
         storyboard = load_json(self.project_path / "storyboard.json")
         scenes = storyboard.get("scenes", [])
         total = len(scenes)
+
+        # 获取失效的场景列表
+        invalidated = set(self.state.get_invalidated_scenes("video"))
+        if invalidated:
+            logger.info(f"检测到 {len(invalidated)} 个失效场景需要重新生成视频")
+
+        # 计算待生成的场景数量
+        pending_scenes = [
+            s for s in scenes
+            if not self.state.is_scene_completed(s["id"], "video") or s["id"] in invalidated
+        ]
+        pending_count = len(pending_scenes)
+
+        # 配额预检查
+        if pending_count > 0:
+            is_sufficient, quota_msg = self._video_gen.check_quota_sufficient(pending_count)
+            logger.info(f"视频配额检查: {quota_msg}")
+
+            if not is_sufficient:
+                self.state.add_error("generate_video", None, f"配额不足: {quota_msg}")
+                self._save_state()
+                raise RuntimeError(f"视频生成配额不足: {quota_msg}，请充值后重试")
+
+        self._report_progress("视频生成", "调用API生成视频片段...", 0.0)
+
         failed_count = 0
         success_count = 0
         skipped_count = 0
+        regenerated_count = 0
 
         for i, scene in enumerate(scenes):
-            scene_id = scene["id"]
+            # 场景级检查点
+            self._check_stop()
 
-            if self.state.is_scene_completed(scene_id, "video"):
+            scene_id = scene["id"]
+            is_invalidated = scene_id in invalidated
+
+            # 跳过已完成且未失效的场景
+            if self.state.is_scene_completed(scene_id, "video") and not is_invalidated:
                 success_count += 1
                 continue
 
@@ -453,9 +591,10 @@ class PipelineController:
                 skipped_count += 1
                 continue
 
+            action = "重新生成" if is_invalidated else "生成"
             self._report_progress(
                 "视频生成",
-                f"场景 {scene_id} ({i+1}/{total})",
+                f"{action}场景 {scene_id} ({i+1}/{total})",
                 i / total
             )
 
@@ -468,8 +607,14 @@ class PipelineController:
                 )
                 video_data.save(self.project_path / "videos" / f"{scene_id}.mp4")
                 self.state.mark_scene_completed(scene_id, "video")
+                # 清除失效标记
+                if is_invalidated:
+                    self.state.clear_invalidation(scene_id, "video")
+                    regenerated_count += 1
                 self._save_state()
                 success_count += 1
+            except StopRequestedException:
+                raise  # 重新抛出中断异常
             except Exception as e:
                 failed_count += 1
                 self._handle_scene_error("generate_video", scene_id, e, total, failed_count - 1)
@@ -477,17 +622,19 @@ class PipelineController:
 
         # 报告最终结果
         result_parts = [f"{success_count}成功"]
+        if regenerated_count > 0:
+            result_parts.append(f"{regenerated_count}重新生成")
         if failed_count > 0:
             result_parts.append(f"{failed_count}失败")
         if skipped_count > 0:
             result_parts.append(f"{skipped_count}跳过")
-        
+
         self._report_progress(
-            "视频生成", 
-            f"完成: {', '.join(result_parts)} (共{total}个)", 
+            "视频生成",
+            f"完成: {', '.join(result_parts)} (共{total}个)",
             1.0
         )
-        
+
         if failed_count > 0:
             logger.warning(f"视频生成阶段: {failed_count}/{total} 个场景失败")
 
@@ -501,8 +648,11 @@ class PipelineController:
         # 收集所有片段
         clips = []
         skipped_scenes = []
-        
+
         for scene in scenes:
+            # 场景级检查点
+            self._check_stop()
+
             scene_id = scene["id"]
             video_path = self.project_path / "videos" / f"{scene_id}.mp4"
             audio_path = self.project_path / "audio" / f"{scene_id}.wav"
@@ -689,8 +839,156 @@ class PipelineController:
             phase_methods[phase]()
             self._clear_vram()
 
+    def run_from_phase(self, start_phase: Phase) -> None:
+        """从指定阶段开始执行后续所有阶段
+
+        Args:
+            start_phase: 起始阶段
+        """
+        if self.state is None:
+            self.state = PipelineState.load(self.state_file) if self.state_file.exists() else PipelineState()
+
+        self.init_modules()
+
+        phase_methods = {
+            Phase.INIT: self._phase_init,
+            Phase.ANALYZE: self._phase_analyze,
+            Phase.CHARACTER_DESIGN: self._phase_character_design,
+            Phase.GENERATE_IMAGES: self._phase_generate_images,
+            Phase.GENERATE_AUDIO: self._phase_generate_audio,
+            Phase.GENERATE_VIDEO: self._phase_generate_video,
+            Phase.COMPOSE: self._phase_compose,
+        }
+
+        phase_order = list(Phase)
+        start_idx = phase_order.index(start_phase)
+
+        try:
+            for phase in phase_order[start_idx:]:
+                if phase in [Phase.DONE, Phase.ERROR]:
+                    continue
+                if phase in phase_methods:
+                    self._set_phase(phase)
+                    phase_methods[phase]()
+                    self._clear_vram()
+
+            self._set_phase(Phase.DONE)
+            logger.info("🎉 视频生成完成!")
+            self._report_progress("完成", "视频已生成", 1.0)
+        except Exception as e:
+            logger.error(f"Pipeline执行错误: {e}")
+            self.state.add_error(self.state.current_phase.value, None, str(e))
+            self._set_phase(Phase.ERROR)
+            self._save_state()
+            raise
+
+    def run_invalidated_only(self) -> Dict[str, Any]:
+        """仅处理失效的场景
+
+        用于分镜修改后的增量更新，只重新生成被标记为失效的场景资源。
+
+        Returns:
+            包含处理结果的字典
+        """
+        if self.state is None:
+            self.state = PipelineState.load(self.state_file) if self.state_file.exists() else PipelineState()
+
+        if not self.state.has_invalidated_scenes():
+            logger.info("没有失效的场景需要处理")
+            return {"success": True, "message": "没有失效的场景", "regenerated": {}}
+
+        self.init_modules()
+
+        result = {
+            "success": True,
+            "regenerated": {
+                "image": 0,
+                "audio": 0,
+                "video": 0,
+            },
+            "errors": []
+        }
+
+        storyboard = load_json(self.project_path / "storyboard.json")
+        characters = load_json(self.project_path / "characters.json")
+        scenes = storyboard.get("scenes", [])
+        scene_map = {s["id"]: s for s in scenes}
+
+        # 加载角色参考图
+        self._load_character_references(characters)
+
+        # 处理失效的图像
+        for scene_id in list(self.state.get_invalidated_scenes("image")):
+            if scene_id not in scene_map:
+                continue
+            scene = scene_map[scene_id]
+            try:
+                self._report_progress("增量更新", f"重新生成图像: {scene_id}", 0.3)
+                image = self._image_gen.generate_scene(scene, characters, style_preset=self.config.video.style)
+                image.save(self.project_path / "images" / f"{scene_id}.png")
+                self.state.mark_scene_completed(scene_id, "image")
+                self.state.clear_invalidation(scene_id, "image")
+                result["regenerated"]["image"] += 1
+            except Exception as e:
+                result["errors"].append({"scene_id": scene_id, "type": "image", "error": str(e)})
+
+        # 处理失效的音频
+        for scene_id in list(self.state.get_invalidated_scenes("audio")):
+            if scene_id not in scene_map:
+                continue
+            scene = scene_map[scene_id]
+            try:
+                self._report_progress("增量更新", f"重新生成音频: {scene_id}", 0.5)
+                audio_data = self._tts.generate_scene_audio(scene.get("audio", {}), characters)
+                audio_data.save(self.project_path / "audio" / f"{scene_id}.wav")
+                self.state.mark_scene_completed(scene_id, "audio")
+                self.state.clear_invalidation(scene_id, "audio")
+                result["regenerated"]["audio"] += 1
+            except Exception as e:
+                result["errors"].append({"scene_id": scene_id, "type": "audio", "error": str(e)})
+
+        # 处理失效的视频
+        if self._video_gen:
+            for scene_id in list(self.state.get_invalidated_scenes("video")):
+                if scene_id not in scene_map:
+                    continue
+                scene = scene_map[scene_id]
+                image_path = self.project_path / "images" / f"{scene_id}.png"
+                if not image_path.exists():
+                    continue
+                try:
+                    self._report_progress("增量更新", f"重新生成视频: {scene_id}", 0.7)
+                    motion_prompt = self._build_motion_prompt(scene)
+                    video_data = self._video_gen.generate(
+                        image_path=image_path,
+                        motion_prompt=motion_prompt,
+                        duration=scene.get("duration", 5.0)
+                    )
+                    video_data.save(self.project_path / "videos" / f"{scene_id}.mp4")
+                    self.state.mark_scene_completed(scene_id, "video")
+                    self.state.clear_invalidation(scene_id, "video")
+                    result["regenerated"]["video"] += 1
+                except Exception as e:
+                    result["errors"].append({"scene_id": scene_id, "type": "video", "error": str(e)})
+
+        self._save_state()
+        self._clear_vram()
+
+        total_regenerated = sum(result["regenerated"].values())
+        if result["errors"]:
+            result["success"] = False
+            result["message"] = f"重新生成完成，{total_regenerated}成功，{len(result['errors'])}失败"
+        else:
+            result["message"] = f"重新生成完成，共{total_regenerated}个资源"
+
+        self._report_progress("增量更新", result["message"], 1.0)
+        return result
+
     def _phase_generate_images_parallel(self) -> None:
         """图像生成阶段 (并行版本)"""
+        # 阶段开始前检查中断
+        self._check_stop()
+
         self._report_progress("图像生成", "生成场景图像 (并行)...", 0.0)
 
         storyboard = load_json(self.project_path / "storyboard.json")
@@ -735,13 +1033,23 @@ class PipelineController:
             }
             for s in pending_scenes
         ]
-        
+
         def on_progress(task_id: str, progress: float):
             self._report_progress("图像生成", f"进度 {progress*100:.0f}%", progress)
-        
+
+        # 动态计算并发数：基于当前 GPU 显存可用量
+        gpu_monitor = get_gpu_monitor()
+        dynamic_workers = gpu_monitor.calculate_optimal_workers(
+            min_workers=1,
+            max_workers=self.config.generation.max_concurrent_tasks,
+            memory_per_task_mb=2500.0,  # ComfyUI 单任务预估显存占用
+            safety_margin=0.2
+        )
+        logger.info(f"图像生成并发数: {dynamic_workers} (配置上限: {self.config.generation.max_concurrent_tasks})")
+
         results = run_parallel_sync(
             tasks,
-            max_workers=self.config.generation.max_concurrent_tasks,
+            max_workers=dynamic_workers,
             on_progress=on_progress
         )
         
@@ -757,6 +1065,9 @@ class PipelineController:
 
     def _phase_generate_audio_parallel(self) -> None:
         """音频生成阶段 (并行版本)"""
+        # 阶段开始前检查中断
+        self._check_stop()
+
         self._report_progress("音频生成", "生成配音 (并行)...", 0.0)
 
         storyboard = load_json(self.project_path / "storyboard.json")
@@ -797,13 +1108,23 @@ class PipelineController:
             }
             for s in pending_scenes
         ]
-        
+
         def on_progress(task_id: str, progress: float):
             self._report_progress("音频生成", f"进度 {progress*100:.0f}%", progress)
-        
+
+        # 音频生成对显存要求较低，但仍使用动态计算以防止资源冲突
+        gpu_monitor = get_gpu_monitor()
+        dynamic_workers = gpu_monitor.calculate_optimal_workers(
+            min_workers=1,
+            max_workers=self.config.generation.max_concurrent_tasks,
+            memory_per_task_mb=1000.0,  # TTS 任务显存占用较低
+            safety_margin=0.15
+        )
+        logger.info(f"音频生成并发数: {dynamic_workers} (配置上限: {self.config.generation.max_concurrent_tasks})")
+
         results = run_parallel_sync(
             tasks,
-            max_workers=self.config.generation.max_concurrent_tasks,
+            max_workers=dynamic_workers,
             on_progress=on_progress
         )
         

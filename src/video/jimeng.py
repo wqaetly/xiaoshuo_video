@@ -252,16 +252,23 @@ class JimengClient(VideoAPIClient):
             return {"state": "unknown", "error": str(e)}
 
     def get_quota(self) -> Dict[str, Any]:
-        """获取账户配额信息"""
+        """获取即梦账户配额信息"""
         try:
             response = self._session.get(
                 f"{self.base_url}/account/quota",
                 timeout=10
             )
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            # 标准化返回格式
+            return {
+                "available": data.get("remaining", data.get("available", 0)),
+                "used": data.get("used", 0),
+                "total": data.get("total", 0),
+                "unit": "credits"
+            }
         except Exception as e:
-            logger.error(f"获取配额失败: {e}")
+            logger.warning(f"获取即梦配额失败: {e}")
             return {}
 
     def generate_with_text(

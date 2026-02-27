@@ -2,11 +2,32 @@
 分镜场景服务 - 封装场景相关业务逻辑
 """
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 from datetime import datetime
+
+from loguru import logger
 
 from src.utils.config import get_config, Config
 from src.utils.file_utils import load_json, save_json, ensure_dir
+from src.pipeline.state import PipelineState
+
+
+# 定义字段与下游资源的依赖关系
+# 修改这些字段会导致对应类型的资源失效
+FIELD_DEPENDENCIES: Dict[str, List[str]] = {
+    # 视觉相关字段 -> 图像、视频失效
+    "visual": ["image", "video"],
+    "description": ["image", "video"],
+    "scene_description": ["image", "video"],
+    "environment": ["image", "video"],
+    "characters": ["image", "video"],  # 场景中的角色变化
+    # 音频相关字段 -> 音频失效
+    "audio": ["audio"],
+    "narration": ["audio"],
+    "dialogue": ["audio"],
+    # 时长变化 -> 视频、音频都需要重新生成
+    "duration": ["audio", "video"],
+}
 
 
 class SceneService:
@@ -30,6 +51,59 @@ class SceneService:
     def _save_storyboard(self, project_name: str, storyboard: Dict[str, Any]) -> None:
         """保存分镜数据"""
         save_json(self._get_storyboard_path(project_name), storyboard)
+
+    def _get_pipeline_state_path(self, project_name: str) -> Path:
+        """获取管线状态文件路径"""
+        return self.projects_dir / project_name / "pipeline_state.json"
+
+    def _load_pipeline_state(self, project_name: str) -> Optional[PipelineState]:
+        """加载管线状态"""
+        path = self._get_pipeline_state_path(project_name)
+        if not path.exists():
+            return None
+        try:
+            return PipelineState.load(path)
+        except Exception as e:
+            logger.warning(f"加载管线状态失败: {e}")
+            return None
+
+    def _save_pipeline_state(self, project_name: str, state: PipelineState) -> None:
+        """保存管线状态"""
+        path = self._get_pipeline_state_path(project_name)
+        state.save(path)
+
+    def _invalidate_scene_resources(
+        self, project_name: str, scene_id: str, modified_fields: Set[str]
+    ) -> None:
+        """根据修改的字段，使相关资源失效
+
+        Args:
+            project_name: 项目名
+            scene_id: 场景ID
+            modified_fields: 被修改的字段集合
+        """
+        state = self._load_pipeline_state(project_name)
+        if state is None:
+            # 还没有生成过，不需要失效
+            return
+
+        # 收集需要失效的资源类型
+        task_types_to_invalidate: Set[str] = set()
+        for field in modified_fields:
+            if field in FIELD_DEPENDENCIES:
+                task_types_to_invalidate.update(FIELD_DEPENDENCIES[field])
+
+        if not task_types_to_invalidate:
+            return
+
+        # 标记失效
+        state.invalidate_scene(scene_id, list(task_types_to_invalidate))
+        self._save_pipeline_state(project_name, state)
+
+        logger.info(
+            f"场景 {scene_id} 资源已标记失效: {task_types_to_invalidate}, "
+            f"因修改字段: {modified_fields}"
+        )
 
     def list_scenes(
         self, project_name: str, chapter: Optional[int] = None, status: Optional[str] = None
@@ -113,7 +187,10 @@ class SceneService:
     def update_scene(
         self, project_name: str, scene_id: str, updates: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """更新场景"""
+        """更新场景
+
+        更新场景数据，并自动标记受影响的下游资源为失效状态。
+        """
         storyboard = self._load_storyboard(project_name)
         if storyboard is None:
             return None
@@ -121,16 +198,30 @@ class SceneService:
         scenes = storyboard.get("scenes", [])
         for i, scene in enumerate(scenes):
             if scene.get("id") == scene_id:
+                # 记录实际被修改的字段
+                modified_fields: Set[str] = set()
+
                 # 更新字段
                 for key, value in updates.items():
                     if key not in ["id", "global_index"]:  # 保护关键字段
-                        if isinstance(value, dict) and isinstance(scene.get(key), dict):
-                            scene[key].update(value)
-                        else:
+                        old_value = scene.get(key)
+                        if isinstance(value, dict) and isinstance(old_value, dict):
+                            # 检查字典内容是否真的变化
+                            if value != old_value:
+                                scene[key].update(value)
+                                modified_fields.add(key)
+                        elif value != old_value:
                             scene[key] = value
+                            modified_fields.add(key)
+
                 scenes[i] = scene
                 storyboard["scenes"] = scenes
                 self._save_storyboard(project_name, storyboard)
+
+                # 触发资源失效
+                if modified_fields:
+                    self._invalidate_scene_resources(project_name, scene_id, modified_fields)
+
                 return scene
 
         return None

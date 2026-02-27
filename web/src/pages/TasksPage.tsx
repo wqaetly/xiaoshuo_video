@@ -19,6 +19,7 @@ import {
   ClearOutlined,
 } from '@ant-design/icons'
 import { taskApi, LogEntry } from '../api/tasks'
+import { showApiError } from '../api/client'
 import type { Task } from '../types'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -36,7 +37,7 @@ function TasksPage() {
       const data = await taskApi.list()
       setTasks(data.tasks)
     } catch (error) {
-      message.error('获取任务列表失败')
+      showApiError(error, '获取任务列表失败')
     } finally {
       setLoading(false)
     }
@@ -47,7 +48,7 @@ function TasksPage() {
       const data = await taskApi.getLogs(100)
       setLogs(data)
     } catch (error) {
-      console.error('获取日志失败')
+      showApiError(error, '获取日志失败')
     }
   }, [])
 
@@ -67,7 +68,7 @@ function TasksPage() {
       message.success('任务已取消')
       fetchTasks()
     } catch (error) {
-      message.error('取消失败')
+      showApiError(error, '取消任务失败')
     }
   }
 
@@ -77,7 +78,7 @@ function TasksPage() {
       message.success('所有任务已取消')
       fetchTasks()
     } catch (error) {
-      message.error('取消失败')
+      showApiError(error, '取消任务失败')
     }
   }
 
@@ -87,7 +88,7 @@ function TasksPage() {
       message.success('已清理完成的任务')
       fetchTasks()
     } catch (error) {
-      message.error('清理失败')
+      showApiError(error, '清理任务失败')
     }
   }
 
@@ -97,7 +98,7 @@ function TasksPage() {
       message.success('日志已清除')
       setLogs([])
     } catch (error) {
-      message.error('清除失败')
+      showApiError(error, '清除日志失败')
     }
   }
 

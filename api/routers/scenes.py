@@ -88,13 +88,77 @@ async def reorder_scenes(project_name: str, request: SceneReorderRequest):
 async def regenerate_scenes(
     project_name: str, request: SceneRegenerateRequest, background_tasks: BackgroundTasks
 ):
-    """重新生成场景资源"""
-    # TODO: 将重新生成任务添加到后台任务队列
+    """重新生成场景资源
+
+    手动指定要重新生成的场景和资源类型。
+    会先标记这些场景为失效，然后触发重新生成。
+    """
+    from ..services.generation_service import get_generation_service
+
+    scene_service = get_scene_service()
+    generation_service = get_generation_service()
+
+    # 手动标记指定场景为失效
+    for scene_id in request.scene_ids:
+        scene_service._invalidate_scene_resources(
+            project_name,
+            scene_id,
+            set(request.resource_types)
+        )
+
+    # 触发增量更新
+    result = generation_service.regenerate_invalidated(project_name)
+
     return {
-        "message": "已添加重新生成任务",
+        "success": result.get("success", True),
+        "message": result.get("message", "已添加重新生成任务"),
         "scene_ids": request.scene_ids,
         "resource_types": request.resource_types,
     }
+
+
+@router.post("/{project_name}/sync-changes")
+async def sync_changes(project_name: str):
+    """同步变更 - 重新生成所有失效的场景资源
+
+    当分镜文本被修改后，相关资源会自动标记为失效。
+    调用此接口会重新生成所有失效的资源。
+    """
+    from ..services.generation_service import get_generation_service
+
+    generation_service = get_generation_service()
+
+    # 先检查是否有失效的场景
+    status = generation_service.get_invalidation_status(project_name)
+    if not status.get("has_invalidated", False):
+        return {
+            "success": True,
+            "message": "没有需要同步的变更",
+            "invalidated_counts": status.get("invalidated_counts", {}),
+        }
+
+    # 触发增量更新
+    result = generation_service.regenerate_invalidated(project_name)
+
+    return {
+        "success": result.get("success", True),
+        "message": result.get("message", "已启动同步任务"),
+        "invalidated_counts": status.get("invalidated_counts", {}),
+    }
+
+
+@router.get("/{project_name}/invalidation-status")
+async def get_invalidation_status(project_name: str):
+    """获取项目的失效状态
+
+    返回所有被标记为失效需要重新生成的场景信息。
+    """
+    from ..services.generation_service import get_generation_service
+
+    generation_service = get_generation_service()
+    status = generation_service.get_invalidation_status(project_name)
+
+    return status
 
 
 @router.post("/{project_name}/analyze")

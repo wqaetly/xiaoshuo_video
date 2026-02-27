@@ -22,6 +22,7 @@ import {
   DeleteOutlined,
 } from '@ant-design/icons'
 import { projectApi } from '../api/projects'
+import { showApiError } from '../api/client'
 import type { Project } from '../types'
 
 const { Title, Text } = Typography
@@ -40,7 +41,7 @@ function ProjectsPage() {
       const data = await projectApi.list()
       setProjects(data.projects)
     } catch (error) {
-      message.error('获取项目列表失败')
+      showApiError(error, '获取项目列表失败')
     } finally {
       setLoading(false)
     }
@@ -59,7 +60,7 @@ function ProjectsPage() {
       form.resetFields()
       fetchProjects()
     } catch (error) {
-      message.error('创建项目失败')
+      showApiError(error, '创建项目失败')
     } finally {
       setCreating(false)
     }
@@ -71,7 +72,7 @@ function ProjectsPage() {
       message.success('项目已删除')
       fetchProjects()
     } catch (error) {
-      message.error('删除项目失败')
+      showApiError(error, '删除项目失败')
     }
   }
 

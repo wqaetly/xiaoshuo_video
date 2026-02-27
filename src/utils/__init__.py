@@ -11,6 +11,7 @@ from .retry import (
     APIErrorCode,
     DEFAULT_RETRY_CONFIG,
 )
+from .gpu_monitor import GPUMonitor, GPUMemoryInfo, get_gpu_monitor
 
 __all__ = [
     "Config",
@@ -29,4 +30,7 @@ __all__ = [
     "APIError",
     "APIErrorCode",
     "DEFAULT_RETRY_CONFIG",
+    "GPUMonitor",
+    "GPUMemoryInfo",
+    "get_gpu_monitor",
 ]

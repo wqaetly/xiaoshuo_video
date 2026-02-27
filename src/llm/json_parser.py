@@ -1,7 +1,7 @@
 """JSON解析增强模块 - 处理LLM输出的不完整/格式错误的JSON"""
 import json
 import re
-from typing import Any, Optional, List, Dict, Union, Type, TypeVar
+from typing import Any, Optional, List, Dict, Union, Type, TypeVar, Callable
 from pydantic import BaseModel, ValidationError
 from ..utils.logger import get_logger
 
@@ -258,6 +258,120 @@ def create_json_extraction_prompt(
         prompt += f"\n示例输出:\n```json\n{json.dumps(example, ensure_ascii=False, indent=2)}\n```\n"
     
     return prompt
+
+
+class ParseResult:
+    """JSON 解析结果"""
+    def __init__(
+        self,
+        success: bool,
+        data: Any = None,
+        error: Optional[str] = None,
+        raw_text: Optional[str] = None
+    ):
+        self.success = success
+        self.data = data
+        self.error = error
+        self.raw_text = raw_text
+
+
+def parse_with_retry(
+    llm_call: Callable[[str], str],
+    initial_prompt: str,
+    expected_schema_desc: str,
+    max_retries: int = 3,
+    repair: bool = True
+) -> ParseResult:
+    """
+    带自动重试的 LLM JSON 解析
+
+    当 JSON 解析失败时，自动向 LLM 发送纠正请求，提供错误信息和预期格式。
+
+    Args:
+        llm_call: LLM 调用函数，接收 prompt 返回 response
+        initial_prompt: 初始提示词
+        expected_schema_desc: JSON 格式描述（用于纠正提示）
+        max_retries: 最大重试次数
+        repair: 是否尝试修复 JSON
+
+    Returns:
+        ParseResult 包含解析结果或错误信息
+    """
+    current_prompt = initial_prompt
+    last_error = None
+    last_response = None
+
+    for attempt in range(max_retries + 1):  # +1 for initial attempt
+        try:
+            # 调用 LLM
+            response = llm_call(current_prompt)
+            last_response = response
+
+            # 尝试解析
+            result = parse_json_safe(response, default=None, repair=repair)
+
+            if result is not None:
+                return ParseResult(success=True, data=result, raw_text=response)
+
+            # 解析失败，构建纠正提示
+            last_error = "JSON 解析失败，返回结果为 None"
+            logger.warning(f"JSON 解析失败 (尝试 {attempt + 1}/{max_retries + 1})")
+
+            if attempt < max_retries:
+                # 构建纠正提示
+                current_prompt = _build_correction_prompt(
+                    original_response=response,
+                    error_message=last_error,
+                    expected_schema=expected_schema_desc
+                )
+
+        except json.JSONDecodeError as e:
+            last_error = f"JSON 解析错误: {str(e)}"
+            logger.warning(f"JSON 解析异常: {e} (尝试 {attempt + 1}/{max_retries + 1})")
+
+            if attempt < max_retries:
+                current_prompt = _build_correction_prompt(
+                    original_response=last_response or "",
+                    error_message=last_error,
+                    expected_schema=expected_schema_desc
+                )
+
+        except Exception as e:
+            last_error = f"调用异常: {str(e)}"
+            logger.error(f"LLM 调用异常: {e}")
+            break
+
+    return ParseResult(
+        success=False,
+        data=None,
+        error=last_error,
+        raw_text=last_response
+    )
+
+
+def _build_correction_prompt(
+    original_response: str,
+    error_message: str,
+    expected_schema: str
+) -> str:
+    """构建 JSON 纠正提示"""
+    # 截取部分原始响应
+    truncated_response = original_response[:500] + "..." if len(original_response) > 500 else original_response
+
+    return f"""你之前的响应无法解析为有效的 JSON。请重新输出，确保格式正确。
+
+错误信息: {error_message}
+
+你之前的输出片段:
+```
+{truncated_response}
+```
+
+预期的 JSON 格式:
+{expected_schema}
+
+请重新输出正确格式的 JSON，不要包含任何额外的说明文字：
+"""
 
 
 class StreamingJSONParser:

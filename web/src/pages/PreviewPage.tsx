@@ -24,6 +24,7 @@ import {
 } from '@ant-design/icons'
 import { sceneApi } from '../api/scenes'
 import { editorApi } from '../api/editor'
+import { showApiError } from '../api/client'
 import type { Scene, MediaInfo } from '../types'
 
 const { Title, Text } = Typography
@@ -47,7 +48,7 @@ function PreviewPage() {
       setScenes(sceneData.scenes)
       setVideos(materialData.videos)
     } catch (error) {
-      message.error('加载预览数据失败')
+      showApiError(error, '加载预览数据失败')
     } finally {
       setLoading(false)
     }

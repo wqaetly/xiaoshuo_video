@@ -14,6 +14,7 @@ import {
 } from 'antd'
 import { SaveOutlined, ReloadOutlined } from '@ant-design/icons'
 import { settingsApi } from '../api/settings'
+import { showApiError } from '../api/client'
 import type { AppSettings } from '../types'
 
 const { Title } = Typography
@@ -35,7 +36,7 @@ function SettingsPage() {
       apiForm.setFieldsValue(response.settings.api)
       videoForm.setFieldsValue(response.settings.video)
     } catch (error) {
-      message.error('获取设置失败')
+      showApiError(error, '获取设置失败')
     } finally {
       setLoading(false)
     }
@@ -51,7 +52,7 @@ function SettingsPage() {
       await settingsApi.updateLocal(values)
       message.success('本地服务配置已保存')
     } catch (error) {
-      message.error('保存失败')
+      showApiError(error, '保存本地服务配置失败')
     } finally {
       setSaving(false)
     }
@@ -63,7 +64,7 @@ function SettingsPage() {
       await settingsApi.updateApi(values)
       message.success('API配置已保存')
     } catch (error) {
-      message.error('保存失败')
+      showApiError(error, '保存API配置失败')
     } finally {
       setSaving(false)
     }
@@ -75,7 +76,7 @@ function SettingsPage() {
       await settingsApi.updateVideo(values)
       message.success('视频配置已保存')
     } catch (error) {
-      message.error('保存失败')
+      showApiError(error, '保存视频配置失败')
     } finally {
       setSaving(false)
     }

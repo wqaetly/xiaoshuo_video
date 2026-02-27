@@ -6,12 +6,33 @@ export interface ServiceStatus {
   cosyvoice: { available: boolean }
 }
 
+export interface CompletedTasks {
+  character: number
+  image: number
+  audio: number
+  video: number
+}
+
+export interface FailedScene {
+  scene_id: string
+  phase: string
+  message: string
+  time: string
+}
+
 export interface GenerationProgress {
   phase: string
+  phase_index: number
+  total_phases: number
+  task: string
   progress: number
-  current_task?: string
-  completed_scenes: number
+  message: string
+  is_running: boolean
+  current_scene_index: number
   total_scenes: number
+  completed_tasks: CompletedTasks
+  failed_scenes: FailedScene[]
+  error_count: number
 }
 
 export const generationApi = {

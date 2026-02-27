@@ -226,6 +226,124 @@ class TestJsonParser:
         assert result is None
 
 
+class TestParseWithRetry:
+    """parse_with_retry 智能重试测试"""
+
+    def test_parse_with_retry_success_first_try(self):
+        """测试首次解析成功"""
+        from src.llm.json_parser import parse_with_retry
+
+        def mock_llm(prompt: str) -> str:
+            return '{"key": "value"}'
+
+        result = parse_with_retry(
+            llm_call=mock_llm,
+            initial_prompt="生成 JSON",
+            expected_schema_desc='{"key": "string"}',
+            max_retries=3
+        )
+
+        assert result.success is True
+        assert result.data == {"key": "value"}
+        assert result.error is None  # 成功时没有错误
+
+    def test_parse_with_retry_with_code_block(self):
+        """测试包含 markdown 代码块的响应"""
+        from src.llm.json_parser import parse_with_retry
+
+        def mock_llm(prompt: str) -> str:
+            return '''这是一些说明
+```json
+{"name": "test", "count": 42}
+```
+'''
+
+        result = parse_with_retry(
+            llm_call=mock_llm,
+            initial_prompt="生成 JSON",
+            expected_schema_desc='{"name": "string"}',
+            max_retries=3
+        )
+
+        assert result.success is True
+        assert result.data["name"] == "test"
+        assert result.data["count"] == 42
+
+    def test_parse_with_retry_fix_on_second_try(self):
+        """测试第二次重试成功"""
+        from src.llm.json_parser import parse_with_retry
+
+        call_count = [0]
+
+        def mock_llm(prompt: str) -> str:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # 第一次返回无效 JSON
+                return '{"incomplete": '
+            else:
+                # 第二次返回有效 JSON
+                return '{"complete": true}'
+
+        result = parse_with_retry(
+            llm_call=mock_llm,
+            initial_prompt="生成 JSON",
+            expected_schema_desc='{"complete": "boolean"}',
+            max_retries=3
+        )
+
+        assert result.success is True
+        assert result.data == {"complete": True}
+        # 验证确实调用了两次
+        assert call_count[0] == 2
+
+    def test_parse_with_retry_all_retries_failed(self):
+        """测试所有重试都失败"""
+        from src.llm.json_parser import parse_with_retry
+
+        call_count = [0]
+
+        def mock_llm(prompt: str) -> str:
+            call_count[0] += 1
+            return "这不是有效的 JSON 格式"
+
+        result = parse_with_retry(
+            llm_call=mock_llm,
+            initial_prompt="生成 JSON",
+            expected_schema_desc='{}',
+            max_retries=2
+        )
+
+        assert result.success is False
+        assert result.data is None
+        assert result.error is not None
+        # 验证尝试了正确次数 (初始 + 重试)
+        assert call_count[0] == 3  # 1 initial + 2 retries
+
+    def test_parse_with_retry_error_feedback_in_prompt(self):
+        """测试错误信息被反馈到重试 prompt 中"""
+        from src.llm.json_parser import parse_with_retry
+
+        prompts_received = []
+
+        def mock_llm(prompt: str) -> str:
+            prompts_received.append(prompt)
+            if len(prompts_received) == 1:
+                return '{"missing_bracket": true'  # 缺少 }
+            return '{"fixed": true}'
+
+        result = parse_with_retry(
+            llm_call=mock_llm,
+            initial_prompt="初始提示",
+            expected_schema_desc='{}',
+            max_retries=3
+        )
+
+        assert result.success is True
+        assert len(prompts_received) == 2
+        # 第二次 prompt 应该包含错误信息
+        assert "JSON" in prompts_received[1] or "错误" in prompts_received[1]
+
+
 class TestChapterSplitter:
     """章节分割器测试"""
 

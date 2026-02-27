@@ -259,3 +259,24 @@ class InvalidConfigError(ConfigError):
         self.reason = reason
         message = f"配置无效: {config_key}={value}"
         super().__init__(message, reason)
+
+
+# ============ 流程控制异常 ============
+
+
+class PipelineError(XiaoshuoVideoError):
+    """流水线相关错误基类"""
+
+    pass
+
+
+class StopRequestedException(PipelineError):
+    """任务停止请求异常
+
+    当用户请求停止任务时，在检查点抛出此异常以优雅终止流程。
+    这不是一个错误状态，而是正常的控制流程。
+    """
+
+    def __init__(self, message: str = "任务被用户中断"):
+        super().__init__(message)
+        self.is_user_requested = True

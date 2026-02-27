@@ -30,6 +30,7 @@ import {
 import VideoPlayer, { VideoPlayerRef } from '../components/VideoPlayer'
 import Timeline from '../components/Timeline'
 import { editorApi } from '../api/editor'
+import { showApiError } from '../api/client'
 import type { TimelineTrack, MediaInfo } from '../types'
 
 const { Title, Text } = Typography
@@ -113,7 +114,7 @@ function EditorPage() {
         setCurrentVideoSrc(`/api/files/${projectName}/${materialData.videos[0].path}`)
       }
     } catch (error) {
-      console.error('加载编辑器数据失败:', error)
+      showApiError(error, '加载编辑器数据失败')
     } finally {
       setLoading(false)
     }
@@ -193,7 +194,7 @@ function EditorPage() {
       await editorApi.saveTimeline(projectName, timeline)
       message.success('时间轴已保存')
     } catch (error) {
-      message.error('保存失败')
+      showApiError(error, '保存时间轴失败')
     }
   }
 
@@ -206,7 +207,7 @@ function EditorPage() {
       message.success('导出任务已启动')
       setExportModalVisible(false)
     } catch (error) {
-      message.error('导出失败')
+      showApiError(error, '导出失败')
     } finally {
       setExporting(false)
     }

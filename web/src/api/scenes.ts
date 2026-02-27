@@ -41,5 +41,59 @@ export const sceneApi = {
   analyze: (projectName: string): Promise<{ task_id: string }> => {
     return apiClient.post(`/scenes/${projectName}/analyze`)
   },
+
+  // 获取失效状态
+  getInvalidationStatus: (projectName: string): Promise<InvalidationStatus> => {
+    return apiClient.get(`/scenes/${projectName}/invalidation-status`)
+  },
+
+  // 同步变更 - 重新生成失效的场景资源
+  syncChanges: (projectName: string): Promise<SyncChangesResponse> => {
+    return apiClient.post(`/scenes/${projectName}/sync-changes`)
+  },
+
+  // 重新生成指定场景的资源
+  regenerate: (
+    projectName: string,
+    sceneIds: string[],
+    resourceTypes: string[] = ['image', 'audio', 'video']
+  ): Promise<RegenerateResponse> => {
+    return apiClient.post(`/scenes/${projectName}/regenerate`, {
+      scene_ids: sceneIds,
+      resource_types: resourceTypes,
+    })
+  },
+}
+
+// 类型定义
+export interface InvalidationStatus {
+  has_invalidated: boolean
+  invalidated_counts: {
+    image: number
+    audio: number
+    video: number
+  }
+  invalidated_scenes: {
+    image: string[]
+    audio: string[]
+    video: string[]
+  }
+}
+
+export interface SyncChangesResponse {
+  success: boolean
+  message: string
+  invalidated_counts: {
+    image: number
+    audio: number
+    video: number
+  }
+}
+
+export interface RegenerateResponse {
+  success: boolean
+  message: string
+  scene_ids: string[]
+  resource_types: string[]
 }
 

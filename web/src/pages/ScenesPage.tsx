@@ -16,14 +16,19 @@ import {
   Input,
   message,
   Popconfirm,
+  Badge,
+  Alert,
 } from 'antd'
 import {
   EditOutlined,
   DeleteOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  SyncOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons'
-import { sceneApi } from '../api/scenes'
+import { sceneApi, InvalidationStatus } from '../api/scenes'
+import { showApiError } from '../api/client'
 import type { Scene } from '../types'
 
 const { Title, Text, Paragraph } = Typography
@@ -35,6 +40,8 @@ function ScenesPage() {
   const [editModalVisible, setEditModalVisible] = useState(false)
   const [editingScene, setEditingScene] = useState<Scene | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [invalidationStatus, setInvalidationStatus] = useState<InvalidationStatus | null>(null)
   const [form] = Form.useForm()
 
   const fetchScenes = async () => {
@@ -44,14 +51,26 @@ function ScenesPage() {
       const data = await sceneApi.list(projectName)
       setScenes(data.scenes)
     } catch (error) {
-      message.error('获取场景列表失败')
+      showApiError(error, '获取场景列表失败')
     } finally {
       setLoading(false)
     }
   }
 
+  const fetchInvalidationStatus = async () => {
+    if (!projectName) return
+    try {
+      const status = await sceneApi.getInvalidationStatus(projectName)
+      setInvalidationStatus(status)
+    } catch (error) {
+      // 静默处理，可能项目还没有状态文件
+      setInvalidationStatus(null)
+    }
+  }
+
   useEffect(() => {
     fetchScenes()
+    fetchInvalidationStatus()
   }, [projectName])
 
   const handleAnalyze = async () => {
@@ -62,9 +81,26 @@ function ScenesPage() {
       message.success('分镜分析任务已启动')
       fetchScenes()
     } catch (error) {
-      message.error('启动分析失败')
+      showApiError(error, '启动分析失败')
     } finally {
       setAnalyzing(false)
+    }
+  }
+
+  const handleSyncChanges = async () => {
+    if (!projectName) return
+    try {
+      setSyncing(true)
+      const result = await sceneApi.syncChanges(projectName)
+      message.success(result.message || '同步任务已启动')
+      // 延迟刷新状态
+      setTimeout(() => {
+        fetchInvalidationStatus()
+      }, 1000)
+    } catch (error) {
+      showApiError(error, '同步失败')
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -78,11 +114,13 @@ function ScenesPage() {
     if (!projectName || !editingScene) return
     try {
       await sceneApi.update(projectName, editingScene.id, values)
-      message.success('保存成功')
+      message.success('保存成功，相关资源已标记为待更新')
       setEditModalVisible(false)
       fetchScenes()
+      // 保存后刷新失效状态
+      fetchInvalidationStatus()
     } catch (error) {
-      message.error('保存失败')
+      showApiError(error, '保存失败')
     }
   }
 
@@ -93,7 +131,7 @@ function ScenesPage() {
       message.success('删除成功')
       fetchScenes()
     } catch (error) {
-      message.error('删除失败')
+      showApiError(error, '删除失败')
     }
   }
 
@@ -118,17 +156,61 @@ function ScenesPage() {
     )
   }
 
+  // 计算失效场景总数
+  const totalInvalidated = invalidationStatus
+    ? invalidationStatus.invalidated_counts.image +
+      invalidationStatus.invalidated_counts.audio +
+      invalidationStatus.invalidated_counts.video
+    : 0
+
   return (
     <div>
       <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Title level={3} style={{ margin: 0 }}>分镜管理 - {projectName}</Title>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={fetchScenes}>刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => { fetchScenes(); fetchInvalidationStatus(); }}>刷新</Button>
+          {invalidationStatus?.has_invalidated && (
+            <Badge count={totalInvalidated} offset={[-5, 5]}>
+              <Button
+                type="primary"
+                icon={<SyncOutlined />}
+                onClick={handleSyncChanges}
+                loading={syncing}
+                style={{ backgroundColor: '#faad14', borderColor: '#faad14' }}
+              >
+                同步变更
+              </Button>
+            </Badge>
+          )}
           <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleAnalyze} loading={analyzing}>
             分析小说
           </Button>
         </Space>
       </div>
+
+      {/* 失效提示 */}
+      {invalidationStatus?.has_invalidated && (
+        <Alert
+          message="有分镜内容已修改"
+          description={
+            <Space>
+              <span>
+                待更新:
+                {invalidationStatus.invalidated_counts.image > 0 && ` 图像(${invalidationStatus.invalidated_counts.image})`}
+                {invalidationStatus.invalidated_counts.audio > 0 && ` 音频(${invalidationStatus.invalidated_counts.audio})`}
+                {invalidationStatus.invalidated_counts.video > 0 && ` 视频(${invalidationStatus.invalidated_counts.video})`}
+              </span>
+              <Button type="link" size="small" onClick={handleSyncChanges} loading={syncing}>
+                点击同步
+              </Button>
+            </Space>
+          }
+          type="warning"
+          showIcon
+          icon={<ExclamationCircleOutlined />}
+          style={{ marginBottom: 16 }}
+        />
+      )}
 
       {scenes.length === 0 ? (
         <Empty description="暂无场景，请先上传小说并点击&quot;分析小说&quot;" />

@@ -21,6 +21,24 @@ export interface ProjectStatus {
   current_task?: string
 }
 
+// 生成阶段定义
+export interface PhaseInfo {
+  id: string
+  name: string
+  description: string
+  icon?: string
+}
+
+export const GENERATION_PHASES: PhaseInfo[] = [
+  { id: 'init', name: '初始化', description: '准备环境' },
+  { id: 'analyze', name: '分析', description: '分析小说生成分镜' },
+  { id: 'character_design', name: '角色设计', description: '生成角色立绘' },
+  { id: 'generate_images', name: '图像生成', description: '生成场景图像' },
+  { id: 'generate_audio', name: '音频生成', description: '生成配音' },
+  { id: 'generate_video', name: '视频生成', description: '生成场景视频' },
+  { id: 'compose', name: '合成', description: '合成最终视频' },
+]
+
 export interface ProjectStats {
   total_scenes: number
   completed_scenes: number

@@ -101,6 +101,71 @@ class TestConfig:
         assert config.local.ollama_url is not None
         assert config.video.fps > 0
 
+    def test_config_url_validation(self):
+        """测试 URL 验证"""
+        from src.utils.config import LocalConfig
+        import pytest
+
+        # 有效 URL
+        config = LocalConfig(ollama_url="http://localhost:11434")
+        assert config.ollama_url == "http://localhost:11434"
+
+        # 无效 URL 应抛出异常
+        with pytest.raises(ValueError) as exc_info:
+            LocalConfig(ollama_url="invalid-url")
+        assert "无效的 URL 格式" in str(exc_info.value)
+
+    def test_config_video_fps_range(self):
+        """测试视频 FPS 范围验证"""
+        from src.utils.config import VideoConfig
+        import pytest
+
+        # 有效范围
+        config = VideoConfig(fps=30)
+        assert config.fps == 30
+
+        # 超出范围应抛出异常
+        with pytest.raises(ValueError):
+            VideoConfig(fps=5)  # 低于 15
+        with pytest.raises(ValueError):
+            VideoConfig(fps=100)  # 高于 60
+
+    def test_config_generation_duration_validation(self):
+        """测试场景时长范围验证"""
+        from src.utils.config import GenerationConfig
+        import pytest
+
+        # 有效配置
+        config = GenerationConfig(scene_duration_min=3.0, scene_duration_max=6.0)
+        assert config.scene_duration_min == 3.0
+
+        # min >= max 应抛出异常
+        with pytest.raises(ValueError) as exc_info:
+            GenerationConfig(scene_duration_min=6.0, scene_duration_max=5.0)
+        assert "必须小于" in str(exc_info.value)
+
+    def test_config_validate_method(self, tmp_path: Path):
+        """测试配置验证方法"""
+        from src.utils.config import Config
+
+        config = Config()
+        # API 密钥未设置时应返回警告
+        warnings = config.validate()
+        assert any("视频 API 密钥未配置" in w for w in warnings)
+
+    def test_config_resolution_pattern(self):
+        """测试分辨率格式验证"""
+        from src.utils.config import VideoConfig
+        import pytest
+
+        # 有效格式
+        config = VideoConfig(resolution="1920x1080")
+        assert config.resolution == "1920x1080"
+
+        # 无效格式应抛出异常
+        with pytest.raises(ValueError):
+            VideoConfig(resolution="invalid")
+
 
 class TestLogger:
     """日志模块测试"""

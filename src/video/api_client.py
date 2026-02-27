@@ -85,6 +85,40 @@ class VideoAPIClient(ABC, RetryableMixin):
         """检查任务状态"""
         pass
 
+    def get_quota(self) -> dict:
+        """获取账户配额信息（子类可选实现）
+
+        Returns:
+            包含配额信息的字典，例如:
+            {
+                "available": 100,  # 可用配额
+                "used": 50,        # 已用配额
+                "total": 150,      # 总配额
+                "unit": "credits"  # 配额单位
+            }
+        """
+        return {}
+
+    def check_quota_sufficient(self, required_count: int) -> tuple[bool, str]:
+        """检查配额是否足够
+
+        Args:
+            required_count: 需要生成的视频数量
+
+        Returns:
+            (是否足够, 消息)
+        """
+        quota = self.get_quota()
+        if not quota:
+            # 无法获取配额信息时，假设足够并继续
+            return True, "无法获取配额信息，将继续执行"
+
+        available = quota.get("available", 0)
+        if available >= required_count:
+            return True, f"配额充足: {available} 可用, 需要 {required_count}"
+        else:
+            return False, f"配额不足: {available} 可用, 需要 {required_count}"
+
     def wait_for_completion(
         self,
         task_id: str,

@@ -80,6 +80,8 @@ generation:
   max_concurrent_tasks: 3
   retry_count: 3
   retry_delay: 5
+  # 并行执行模式：图像和音频可以同时生成（它们没有依赖关系）
+  enable_parallel: true
 
 # 音频处理配置
 audio:

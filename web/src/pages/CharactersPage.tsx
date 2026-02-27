@@ -27,6 +27,7 @@ import {
   UserOutlined,
 } from '@ant-design/icons'
 import { characterApi, VoiceInfo } from '../api/characters'
+import { showApiError } from '../api/client'
 import type { Character } from '../types'
 
 const { Title, Paragraph } = Typography
@@ -48,7 +49,7 @@ function CharactersPage() {
       const data = await characterApi.list(projectName)
       setCharacters(data.characters)
     } catch (error) {
-      message.error('获取角色列表失败')
+      showApiError(error, '获取角色列表失败')
     } finally {
       setLoading(false)
     }
@@ -59,7 +60,7 @@ function CharactersPage() {
       const data = await characterApi.getVoices()
       setVoices(data)
     } catch (error) {
-      console.error('获取音色列表失败')
+      showApiError(error, '获取音色列表失败')
     }
   }
 
@@ -123,7 +124,7 @@ function CharactersPage() {
       setEditModalVisible(false)
       fetchCharacters()
     } catch (error) {
-      message.error(isCreating ? '创建失败' : '保存失败')
+      showApiError(error, isCreating ? '创建失败' : '保存失败')
     }
   }
 
@@ -134,7 +135,7 @@ function CharactersPage() {
       message.success('删除成功')
       fetchCharacters()
     } catch (error) {
-      message.error('删除失败')
+      showApiError(error, '删除失败')
     }
   }
 
@@ -155,7 +156,7 @@ function CharactersPage() {
         message.warning(result.message || '语音合成失败')
       }
     } catch (error) {
-      message.error('语音试听失败')
+      showApiError(error, '语音试听失败')
     }
   }
 
