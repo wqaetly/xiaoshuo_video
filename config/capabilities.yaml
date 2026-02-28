@@ -1,0 +1,112 @@
+# Model Capabilities 配置
+# 定义各模型/提供商支持的参数范围
+
+providers:
+  # ===== 图像生成 =====
+  comfyui:
+    z-image-turbo:
+      display_name: "Z-Image-Turbo (阿里通义6B)"
+      image:
+        resolution_options: ["512x512", "768x768", "1024x1024", "1280x720", "720x1280"]
+        aspect_ratio_options: ["1:1", "16:9", "9:16", "4:3", "3:4"]
+        style_options: ["realistic", "anime", "illustration", "oil_painting"]
+        supports_negative_prompt: true
+        steps_range: [4, 8]
+        cfg_scale_range: [3.0, 7.0]
+        supports_seed: true
+        supports_img2img: true
+        max_batch_size: 4
+      metadata:
+        description: "阿里通义万相 6B 参数模型，4步快速生成，中文优化"
+        local: true
+
+  # ===== 视频生成 =====
+  jimeng:
+    default:
+      display_name: "即梦AI视频"
+      video:
+        generation_mode_options: ["text2video", "img2video"]
+        duration_options: [5.0, 10.0]
+        fps_options: [24, 30]
+        resolution_options: ["1280x720", "1920x1080"]
+        supports_first_last_frame: true
+        supports_generate_audio: false
+        supports_camera_control: false
+        max_wait_time: 600
+        aspect_ratio_options: ["16:9", "9:16", "1:1"]
+      metadata:
+        description: "字节跳动即梦AI视频生成"
+        requires_api_key: true
+
+  kling:
+    default:
+      display_name: "可灵AI视频"
+      video:
+        generation_mode_options: ["text2video", "img2video"]
+        duration_options: [5.0, 10.0]
+        fps_options: [24, 30]
+        resolution_options: ["1280x720", "1920x1080"]
+        supports_first_last_frame: true
+        supports_generate_audio: false
+        supports_camera_control: true
+        max_wait_time: 900
+        aspect_ratio_options: ["16:9", "9:16", "1:1"]
+      metadata:
+        description: "快手可灵AI视频生成"
+        requires_api_key: true
+
+  wan:
+    wan-2.1:
+      display_name: "Wan 2.1 视频"
+      video:
+        generation_mode_options: ["text2video", "img2video"]
+        duration_options: [5.0]
+        fps_options: [24]
+        resolution_options: ["1280x720", "720x1280", "720x720"]
+        supports_first_last_frame: true
+        supports_generate_audio: false
+        supports_camera_control: false
+        max_wait_time: 1200
+        aspect_ratio_options: ["16:9", "9:16", "1:1"]
+      metadata:
+        description: "阿里Wan视频生成模型"
+        requires_api_key: true
+
+  # ===== 语音合成 =====
+  cosyvoice:
+    default:
+      display_name: "CosyVoice TTS"
+      audio:
+        voice_options: ["中文女", "中文男", "英文女", "英文男"]
+        rate_options: ["-50%", "-25%", "0%", "+25%", "+50%"]
+        language_options: ["zh-CN", "en-US"]
+        supports_emotion: true
+        supports_ssml: false
+        format_options: ["wav", "mp3"]
+        sample_rate_options: [22050, 44100]
+      metadata:
+        description: "阿里CosyVoice语音合成"
+        local: true
+
+  edge_tts:
+    default:
+      display_name: "Edge TTS"
+      audio:
+        voice_options:
+          - "zh-CN-XiaoxiaoNeural"
+          - "zh-CN-YunxiNeural"
+          - "zh-CN-YunyangNeural"
+          - "zh-CN-XiaoyiNeural"
+          - "en-US-JennyNeural"
+          - "en-US-GuyNeural"
+        rate_options: ["-50%", "-25%", "0%", "+25%", "+50%"]
+        language_options: ["zh-CN", "en-US", "ja-JP"]
+        supports_emotion: false
+        supports_ssml: true
+        format_options: ["mp3"]
+        sample_rate_options: [24000]
+      metadata:
+        description: "Microsoft Edge TTS (免费云端)"
+        local: false
+        requires_api_key: false
+

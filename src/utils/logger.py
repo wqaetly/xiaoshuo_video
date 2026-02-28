@@ -206,6 +206,45 @@ def setup_logger(
     _initialized = True
 
 
+def _cleanup_old_log_dirs(base_log_dir: Path, max_dirs: int = 30) -> None:
+    """清理旧的日志目录，只保留最近的 N 个
+
+    Args:
+        base_log_dir: 基础日志目录
+        max_dirs: 最大保留的日志目录数量，默认 30
+    """
+    try:
+        # 获取所有时间戳命名的日志目录（格式: YYYYMMDD_HHMMSS）
+        log_dirs = []
+        for item in base_log_dir.iterdir():
+            if item.is_dir() and len(item.name) == 15 and item.name[8] == '_':
+                # 验证格式是否为时间戳
+                try:
+                    datetime.strptime(item.name, "%Y%m%d_%H%M%S")
+                    log_dirs.append(item)
+                except ValueError:
+                    continue
+
+        # 按名称排序（时间戳格式天然支持字符串排序）
+        log_dirs.sort(key=lambda x: x.name, reverse=True)
+
+        # 删除超出数量限制的旧目录
+        dirs_to_remove = log_dirs[max_dirs:]
+        for old_dir in dirs_to_remove:
+            try:
+                import shutil
+                shutil.rmtree(old_dir)
+            except Exception:
+                pass  # 忽略删除失败的目录
+
+        if dirs_to_remove:
+            # 使用 print 而非 logger，因为此时 logger 可能尚未初始化
+            print(f"[Logger] 已清理 {len(dirs_to_remove)} 个旧日志目录")
+
+    except Exception:
+        pass  # 清理失败不影响主流程
+
+
 def _create_session_log_dir(base_log_dir: Path) -> Path:
     """创建会话日志目录（以时间戳命名）
 
@@ -233,6 +272,9 @@ def _create_session_log_dir(base_log_dir: Path) -> Path:
         latest_file.write_text(timestamp, encoding="utf-8")
     except Exception:
         pass  # 忽略写入失败
+
+    # 清理旧的日志目录
+    _cleanup_old_log_dirs(base_log_dir, max_dirs=30)
 
     return session_dir
 

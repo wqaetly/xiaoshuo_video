@@ -1,7 +1,7 @@
 """Pipeline流程控制器"""
 import gc
 from pathlib import Path
-from typing import Optional, Callable, Dict, Any, List
+from typing import Optional, Callable, Dict, Any, List, TYPE_CHECKING
 import torch
 
 from .state import PipelineState, Phase
@@ -12,11 +12,21 @@ from ..utils.logger import get_logger
 from ..utils.file_utils import load_json, save_json, load_yaml, ensure_dir
 from ..utils.gpu_monitor import get_gpu_monitor
 
+if TYPE_CHECKING:
+    from .integration import GeneratorBridge, TaskTrackedPipeline
+
 logger = get_logger(__name__)
 
 
 class PipelineController:
-    """主流程控制器 - 编排整个视频生成流程"""
+    """主流程控制器 - 编排整个视频生成流程
+
+    支持两种模式：
+    1. 传统模式：使用独立的客户端实例（SceneGenerator, CosyVoiceClient 等）
+    2. Bridge 模式：使用 GeneratorBridge 统一管理生成器（推荐）
+
+    通过配置 `generation.use_generator_bridge = true` 启用 Bridge 模式。
+    """
 
     def __init__(self, project_path: Path, config: Optional[Config] = None):
         self.project_path = Path(project_path)
@@ -34,6 +44,11 @@ class PipelineController:
         self._tts = None
         self._composer = None
 
+        # 新架构: GeneratorBridge 和 TaskTrackedPipeline (可选)
+        self._bridge: Optional["GeneratorBridge"] = None
+        self._tracked_pipeline: Optional["TaskTrackedPipeline"] = None
+        self._reference_manager = None
+
         # 回调函数
         self.on_progress: Optional[Callable[[str, str, float], None]] = None
         self.on_phase_change: Optional[Callable[[Phase], None]] = None
@@ -47,6 +62,108 @@ class PipelineController:
         # 中断控制
         self._stop_requested: bool = False
         self._is_running: bool = False
+
+        # 任务追踪开关 (Bridge 模式下可用)
+        self.enable_task_tracking: bool = True
+
+    @property
+    def bridge(self) -> "GeneratorBridge":
+        """获取 GeneratorBridge 实例（懒加载）
+
+        Returns:
+            GeneratorBridge 实例，用于统一的生成器访问
+        """
+        if self._bridge is None:
+            from .integration import GeneratorBridge
+            self._bridge = GeneratorBridge(config=self.config)
+            logger.info("[Pipeline] 初始化 GeneratorBridge")
+        return self._bridge
+
+    @property
+    def use_bridge_mode(self) -> bool:
+        """是否使用 Bridge 模式
+
+        通过配置 generation.use_generator_bridge 控制
+        """
+        return getattr(self.config.generation, 'use_generator_bridge', False)
+
+    def get_video_generator(self) -> Optional[Any]:
+        """获取视频生成器
+
+        优先使用传统模式的 _video_gen，如果不存在且启用了 Bridge 模式，
+        则回退到 bridge.video_generator。
+
+        Returns:
+            视频生成器实例，或 None 如果未配置
+        """
+        if self._video_gen is not None:
+            return self._video_gen
+        if self.use_bridge_mode:
+            return self.bridge.video_generator
+        return None
+
+    def get_audio_generator(self) -> Optional[Any]:
+        """获取语音生成器
+
+        优先使用传统模式的 _tts，如果不存在且启用了 Bridge 模式，
+        则回退到 bridge.audio_generator。
+
+        Returns:
+            语音生成器实例
+        """
+        if self._tts is not None:
+            return self._tts
+        if self.use_bridge_mode:
+            return self.bridge.audio_generator
+        return None
+
+    @property
+    def tracked_pipeline(self) -> "TaskTrackedPipeline":
+        """获取任务追踪 Pipeline 实例（懒加载）
+
+        用于在 Bridge 模式下追踪每个生成任务的状态。
+
+        Returns:
+            TaskTrackedPipeline 实例
+        """
+        if self._tracked_pipeline is None:
+            from .integration import TaskTrackedPipeline
+
+            # 获取项目ID
+            project_id = self.project_path.name if self.project_path else None
+
+            # 创建实例并设置回调
+            self._tracked_pipeline = TaskTrackedPipeline(
+                bridge=self.bridge,
+                project_id=project_id,
+                on_task_progress=self._on_task_progress,
+                on_task_complete=self._on_task_complete,
+                on_task_error=self._on_task_error,
+            )
+            logger.info("[Pipeline] 初始化 TaskTrackedPipeline")
+        return self._tracked_pipeline
+
+    async def _on_task_progress(
+        self, task_id: str, scene_id: str, progress: float, message: str
+    ) -> None:
+        """任务进度回调 - 同步到 PipelineState"""
+        if self.state:
+            # 更新场景进度（如果需要更细粒度追踪）
+            logger.debug(f"[Task:{task_id}] {scene_id}: {progress:.0%} - {message}")
+
+    async def _on_task_complete(
+        self, task_id: str, scene_id: str, output: Dict[str, Any]
+    ) -> None:
+        """任务完成回调"""
+        logger.info(f"[Task:{task_id}] {scene_id} 完成")
+
+    async def _on_task_error(
+        self, task_id: str, scene_id: str, error: str
+    ) -> None:
+        """任务错误回调"""
+        logger.warning(f"[Task:{task_id}] {scene_id} 失败: {error}")
+        if self.state:
+            self.state.add_error("task_tracked", scene_id, error)
 
     def request_stop(self) -> None:
         """请求停止当前任务"""
@@ -70,9 +187,87 @@ class PipelineController:
         return True
 
     def init_modules(self) -> None:
-        """初始化各个模块"""
+        """初始化各个模块
+
+        根据配置决定使用传统模式还是 Bridge 模式：
+        - 传统模式：直接初始化各个客户端实例
+        - Bridge 模式：通过 GeneratorBridge 统一管理
+        """
         logger.info("初始化模块...")
 
+        # 检查是否使用 Bridge 模式
+        if self.use_bridge_mode:
+            logger.info("[Pipeline] 使用 GeneratorBridge 模式")
+            self._init_modules_bridge()
+        else:
+            logger.info("[Pipeline] 使用传统模块模式")
+            self._init_modules_legacy()
+
+    def _init_modules_bridge(self) -> None:
+        """使用 Bridge 模式初始化模块
+
+        通过 GeneratorBridge 统一管理生成器实例，
+        同时保留 LLM 和分镜生成器的独立初始化。
+        """
+        # LLM 模块（Bridge 模式下仍需独立初始化）
+        from ..llm import OllamaClient, StoryboardGenerator, CharacterExtractor, StoryboardAgent
+        self._llm = OllamaClient(
+            base_url=self.config.local.ollama_url,
+            model=self.config.local.ollama_model
+        )
+
+        # 分镜生成器
+        use_agent = getattr(self.config.generation, 'use_agent_storyboard', False)
+        if use_agent:
+            agent_max_iter = getattr(self.config.generation, 'agent_max_iterations', 100)
+            self._storyboard_gen = StoryboardAgent(self._llm, max_context_tokens=8000)
+            self._storyboard_gen.max_iterations = agent_max_iter
+            logger.info("使用 Agent 架构生成分镜 (实验性)")
+        else:
+            self._storyboard_gen = StoryboardGenerator(self._llm)
+            logger.info("使用传统线性方式生成分镜")
+
+        self._character_extractor = CharacterExtractor(self._llm)
+
+        # 通过 Bridge 初始化生成器（懒加载）
+        # 访问 bridge 属性会触发 GeneratorBridge 的初始化
+        _ = self.bridge
+
+        # 图像模块仍需初始化（因为 SceneGenerator 有特定业务逻辑）
+        from ..image import ComfyUIClient, SceneGenerator, CharacterDesigner, CharacterReferenceManager
+        comfyui = ComfyUIClient(base_url=self.config.local.comfyui_url)
+
+        # 初始化角色参考图管理器
+        self._reference_manager = CharacterReferenceManager(comfyui, self.project_path)
+
+        # 简化的图像生成器初始化（使用默认工作流）
+        workflow_dir = Path("config/comfyui_workflows")
+        base_workflow = workflow_dir / self.config.image.workflow
+
+        self._image_gen = SceneGenerator(
+            comfyui,
+            workflow_path=base_workflow if base_workflow.exists() else None,
+        )
+
+        # 角色设计器
+        self._char_designer = CharacterDesigner(comfyui)
+        self._char_designer.reference_manager = self._reference_manager
+
+        # TTS 通过 Bridge 访问（但保留兼容接口）
+        from ..tts import CosyVoiceClient
+        self._tts = CosyVoiceClient(base_url=self.config.local.cosyvoice_url)
+
+        # 视频生成器通过 Bridge 访问
+        # self._video_gen 保持为 None，使用 bridge.video_generator
+
+        # 合成模块
+        from ..compose import VideoComposer
+        self._composer = VideoComposer()
+
+        logger.info("[Pipeline] Bridge 模式初始化完成")
+
+    def _init_modules_legacy(self) -> None:
+        """传统模式初始化模块（原有逻辑）"""
         # LLM模块
         from ..llm import OllamaClient, StoryboardGenerator, CharacterExtractor, StoryboardAgent
         self._llm = OllamaClient(
@@ -401,7 +596,12 @@ class PipelineController:
         self._report_progress("角色设计", "角色立绘生成完成", 1.0)
 
     def _phase_generate_images(self) -> None:
-        """图像生成阶段"""
+        """图像生成阶段
+
+        支持两种模式：
+        1. 传统模式：使用 SceneGenerator 直接生成
+        2. 任务追踪模式：包装为可追踪任务
+        """
         self._report_progress("图像生成", "生成场景图像...", 0.0)
 
         storyboard = load_json(self.project_path / "storyboard.json")
@@ -419,6 +619,9 @@ class PipelineController:
         invalidated = set(self.state.get_invalidated_scenes("image"))
         if invalidated:
             logger.info(f"检测到 {len(invalidated)} 个失效场景需要重新生成图像")
+
+        # 判断是否启用任务追踪
+        use_tracking = self.use_bridge_mode and self.enable_task_tracking
 
         for i, scene in enumerate(scenes):
             # 场景级检查点
@@ -440,11 +643,16 @@ class PipelineController:
             )
 
             try:
-                image = self._image_gen.generate_scene(
-                    scene,
-                    characters,
-                    style_preset=self.config.video.style
-                )
+                # 使用任务追踪模式
+                if use_tracking:
+                    image = self._generate_image_tracked(scene, characters)
+                else:
+                    image = self._image_gen.generate_scene(
+                        scene,
+                        characters,
+                        style_preset=self.config.video.style
+                    )
+
                 image.save(self.project_path / "images" / f"{scene_id}.png")
                 self.state.mark_scene_completed(scene_id, "image")
                 # 清除失效标记
@@ -476,8 +684,67 @@ class PipelineController:
         if failed_count > 0:
             logger.warning(f"图像生成阶段: {failed_count}/{total} 个场景失败")
 
+    def _generate_image_tracked(self, scene: Dict[str, Any], characters: Dict[str, Any]) -> Any:
+        """使用任务追踪生成图像
+
+        包装 SceneGenerator 并创建追踪任务。
+
+        Returns:
+            生成的 PIL Image 对象
+        """
+        import asyncio
+        from api.services.task_queue.models import TaskPriority
+
+        scene_id = scene["id"]
+
+        # 创建任务
+        async def create_and_run_task():
+            task = await self.tracked_pipeline.task_manager.create_task(
+                name=f"生成图像: {scene_id}",
+                task_type="image_generate",
+                params={"scene_id": scene_id, "prompt": scene.get("image_prompt", "")},
+                priority=TaskPriority.NORMAL,
+                project_id=self.project_path.name,
+                scene_id=scene_id,
+                auto_enqueue=False,
+            )
+
+            try:
+                task.update_progress(0.1, "开始生成图像...")
+
+                # 调用实际的图像生成器
+                image = self._image_gen.generate_scene(
+                    scene,
+                    characters,
+                    style_preset=self.config.video.style
+                )
+
+                task.complete(output={
+                    "scene_id": scene_id,
+                    "local_path": str(self.project_path / "images" / f"{scene_id}.png"),
+                })
+
+                return image
+            except Exception as e:
+                task.fail(str(e))
+                raise
+
+        # 在事件循环中运行
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        return loop.run_until_complete(create_and_run_task())
+
     def _phase_generate_audio(self) -> None:
-        """音频生成阶段"""
+        """音频生成阶段
+
+        支持两种模式：
+        1. 传统模式：使用 TTS 直接生成
+        2. 任务追踪模式：包装为可追踪任务
+        """
         self._report_progress("音频生成", "生成配音...", 0.0)
 
         storyboard = load_json(self.project_path / "storyboard.json")
@@ -492,6 +759,9 @@ class PipelineController:
         invalidated = set(self.state.get_invalidated_scenes("audio"))
         if invalidated:
             logger.info(f"检测到 {len(invalidated)} 个失效场景需要重新生成音频")
+
+        # 判断是否启用任务追踪
+        use_tracking = self.use_bridge_mode and self.enable_task_tracking
 
         for i, scene in enumerate(scenes):
             # 场景级检查点
@@ -513,10 +783,15 @@ class PipelineController:
             )
 
             try:
-                audio_data = self._tts.generate_scene_audio(
-                    scene.get("audio", {}),
-                    characters
-                )
+                # 使用任务追踪模式
+                if use_tracking:
+                    audio_data = self._generate_audio_tracked(scene, characters)
+                else:
+                    audio_data = self._tts.generate_scene_audio(
+                        scene.get("audio", {}),
+                        characters
+                    )
+
                 audio_data.save(self.project_path / "audio" / f"{scene_id}.wav")
                 self.state.mark_scene_completed(scene_id, "audio")
                 # 清除失效标记
@@ -547,9 +822,69 @@ class PipelineController:
         if failed_count > 0:
             logger.warning(f"音频生成阶段: {failed_count}/{total} 个场景失败")
 
+    def _generate_audio_tracked(self, scene: Dict[str, Any], characters: Dict[str, Any]) -> Any:
+        """使用任务追踪生成音频
+
+        包装 TTS 生成器并创建追踪任务。
+
+        Returns:
+            生成的 AudioData 对象
+        """
+        import asyncio
+        from api.services.task_queue.models import TaskPriority
+
+        scene_id = scene["id"]
+        audio_config = scene.get("audio", {})
+
+        # 创建任务
+        async def create_and_run_task():
+            task = await self.tracked_pipeline.task_manager.create_task(
+                name=f"生成音频: {scene_id}",
+                task_type="audio_generate",
+                params={"scene_id": scene_id, "audio_config": str(audio_config)},
+                priority=TaskPriority.NORMAL,
+                project_id=self.project_path.name,
+                scene_id=scene_id,
+                auto_enqueue=False,
+            )
+
+            try:
+                task.update_progress(0.1, "开始生成音频...")
+
+                # 调用实际的语音生成器
+                audio_data = self._tts.generate_scene_audio(
+                    audio_config,
+                    characters
+                )
+
+                task.complete(output={
+                    "scene_id": scene_id,
+                    "local_path": str(self.project_path / "audio" / f"{scene_id}.wav"),
+                })
+
+                return audio_data
+            except Exception as e:
+                task.fail(str(e))
+                raise
+
+        # 在事件循环中运行
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        return loop.run_until_complete(create_and_run_task())
+
     def _phase_generate_video(self) -> None:
-        """视频生成阶段 (调用远端API)"""
-        if not self._video_gen:
+        """视频生成阶段 (调用远端API)
+
+        支持两种模式：
+        1. 传统模式：使用视频生成器直接调用
+        2. 任务追踪模式：包装为可追踪任务
+        """
+        video_gen = self.get_video_generator()
+        if not video_gen:
             logger.warning("视频API未配置，跳过视频生成阶段")
             return
 
@@ -573,7 +908,7 @@ class PipelineController:
 
         # 配额预检查
         if pending_count > 0:
-            is_sufficient, quota_msg = self._video_gen.check_quota_sufficient(pending_count)
+            is_sufficient, quota_msg = video_gen.check_quota_sufficient(pending_count)
             logger.info(f"视频配额检查: {quota_msg}")
 
             if not is_sufficient:
@@ -582,6 +917,9 @@ class PipelineController:
                 raise RuntimeError(f"视频生成配额不足: {quota_msg}，请充值后重试")
 
         self._report_progress("视频生成", "调用API生成视频片段...", 0.0)
+
+        # 判断是否启用任务追踪
+        use_tracking = self.use_bridge_mode and self.enable_task_tracking
 
         failed_count = 0
         success_count = 0
@@ -615,11 +953,20 @@ class PipelineController:
 
             try:
                 motion_prompt = self._build_motion_prompt(scene)
-                video_data = self._video_gen.generate(
-                    image_path=image_path,
-                    motion_prompt=motion_prompt,
-                    duration=scene.get("duration", 5.0)
-                )
+                duration = scene.get("duration", 5.0)
+
+                # 使用任务追踪模式
+                if use_tracking:
+                    video_data = self._generate_video_tracked(
+                        scene, image_path, motion_prompt, duration, video_gen
+                    )
+                else:
+                    video_data = video_gen.generate(
+                        image_path=image_path,
+                        motion_prompt=motion_prompt,
+                        duration=duration
+                    )
+
                 video_data.save(self.project_path / "videos" / f"{scene_id}.mp4")
                 self.state.mark_scene_completed(scene_id, "video")
                 # 清除失效标记
@@ -652,6 +999,68 @@ class PipelineController:
 
         if failed_count > 0:
             logger.warning(f"视频生成阶段: {failed_count}/{total} 个场景失败")
+
+    def _generate_video_tracked(
+        self,
+        scene: Dict[str, Any],
+        image_path: Path,
+        motion_prompt: str,
+        duration: float,
+        video_gen
+    ):
+        """使用任务追踪生成视频
+
+        包装视频生成器并创建追踪任务。
+        """
+        import asyncio
+        from api.services.task_queue.models import TaskPriority
+
+        scene_id = scene["id"]
+
+        # 创建任务
+        async def create_and_run_task():
+            task = await self.tracked_pipeline.task_manager.create_task(
+                name=f"生成视频: {scene_id}",
+                task_type="video_generate",
+                params={
+                    "scene_id": scene_id,
+                    "motion_prompt": motion_prompt,
+                    "duration": duration,
+                },
+                priority=TaskPriority.NORMAL,
+                project_id=self.project_path.name,
+                scene_id=scene_id,
+                auto_enqueue=False,
+            )
+
+            try:
+                task.update_progress(0.1, "开始生成视频...")
+
+                # 调用实际的视频生成器
+                video_data = video_gen.generate(
+                    image_path=image_path,
+                    motion_prompt=motion_prompt,
+                    duration=duration
+                )
+
+                task.complete(output={
+                    "scene_id": scene_id,
+                    "local_path": str(self.project_path / "videos" / f"{scene_id}.mp4"),
+                })
+
+                return video_data
+            except Exception as e:
+                task.fail(str(e))
+                raise
+
+        # 在事件循环中运行
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        return loop.run_until_complete(create_and_run_task())
 
     def _phase_compose(self) -> None:
         """合成阶段"""
@@ -963,7 +1372,8 @@ class PipelineController:
                 result["errors"].append({"scene_id": scene_id, "type": "audio", "error": str(e)})
 
         # 处理失效的视频
-        if self._video_gen:
+        video_gen = self.get_video_generator()
+        if video_gen:
             for scene_id in list(self.state.get_invalidated_scenes("video")):
                 if scene_id not in scene_map:
                     continue
@@ -974,7 +1384,7 @@ class PipelineController:
                 try:
                     self._report_progress("增量更新", f"重新生成视频: {scene_id}", 0.7)
                     motion_prompt = self._build_motion_prompt(scene)
-                    video_data = self._video_gen.generate(
+                    video_data = video_gen.generate(
                         image_path=image_path,
                         motion_prompt=motion_prompt,
                         duration=scene.get("duration", 5.0)

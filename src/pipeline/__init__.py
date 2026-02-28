@@ -9,6 +9,11 @@ from .scheduler import (
     TaskPriority,
     TaskStatus,
 )
+from .integration import (
+    GeneratorBridge,
+    TaskTrackedPipeline,
+    create_pipeline_integration,
+)
 
 __all__ = [
     "PipelineController",
@@ -20,4 +25,8 @@ __all__ = [
     "Task",
     "TaskPriority",
     "TaskStatus",
+    # 集成层
+    "GeneratorBridge",
+    "TaskTrackedPipeline",
+    "create_pipeline_integration",
 ]

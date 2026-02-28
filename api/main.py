@@ -38,10 +38,11 @@ async def lifespan(app: FastAPI):
     ws_manager = get_connection_manager()
 
     def on_progress_update(project_name: str, progress_data: dict):
-        """进度更新时广播到 WebSocket"""
+        """进度更新时广播到 WebSocket（按项目隔离）"""
         try:
-            # 在异步上下文中发送
+            # 在异步上下文中发送，只通知订阅该项目的连接
             asyncio.create_task(ws_manager.send_progress(
+                project_name=project_name,
                 phase=progress_data.get("phase", ""),
                 task=progress_data.get("task", ""),
                 progress=progress_data.get("progress", 0.0),

@@ -4,6 +4,7 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from ..models.task import (
     Task,
@@ -15,6 +16,7 @@ from ..models.task import (
     LogEntry,
 )
 from ..services.task_service import get_task_service
+from ..services.task_queue.events import get_event_emitter
 
 router = APIRouter()
 
@@ -139,3 +141,36 @@ async def batch_operation(request: BatchOperationRequest):
         task_ids=task_ids,
     )
 
+
+@router.get("/events/stream")
+async def task_events_stream():
+    """任务事件 SSE 流
+
+    使用 Server-Sent Events 实时推送任务状态更新。
+
+    事件类型:
+    - task_created: 任务创建
+    - task_started: 任务开始执行
+    - task_progress: 任务进度更新
+    - task_completed: 任务完成
+    - task_failed: 任务失败
+    """
+    async def event_generator():
+        emitter = get_event_emitter()
+
+        # 发送连接成功事件
+        yield "event: connected\ndata: {\"message\": \"SSE 连接成功\"}\n\n"
+
+        # 订阅事件流
+        async for event in emitter.subscribe():
+            yield event.to_sse()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+        }
+    )

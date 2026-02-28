@@ -176,6 +176,10 @@ class GenerationConfig(BaseModel):
         le=500,
         description="Agent 最大迭代次数"
     )
+    use_generator_bridge: bool = Field(
+        default=False,
+        description="是否使用 GeneratorBridge 统一生成器管理（推荐用于新项目）"
+    )
 
     @model_validator(mode='after')
     def validate_duration_range(self) -> 'GenerationConfig':
