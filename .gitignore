@@ -53,8 +53,8 @@ data/projects/*/temp/
 data/projects/*/*.json
 !data/projects/.gitkeep
 
-# 模型文件 (太大)
-models/
+# 模型文件 (太大) - 只匹配根目录的 models 文件夹
+/models/
 *.safetensors
 *.ckpt
 *.pt
