@@ -33,7 +33,7 @@ import {
 import { generationApi, ServiceStatus, GenerationProgress } from '../api/generation'
 import { createWebSocket, WSMessage } from '../api/websocket'
 import { showApiError } from '../api/client'
-import { GENERATION_PHASES } from '../types'
+import { GENERATION_PHASES, REGENERATE_PHASE } from '../types'
 
 const { Title, Text } = Typography
 
@@ -98,8 +98,11 @@ function GenerationPage() {
   useEffect(() => {
     const init = async () => {
       setLoading(true)
-      await Promise.all([fetchStatus(), fetchProgress()])
+      // 先快速加载进度数据，服务状态在后台检查（避免超时阻塞页面）
+      await fetchProgress()
       setLoading(false)
+      // 服务状态异步加载，不阻塞页面显示
+      fetchStatus()
     }
     init()
 
@@ -196,6 +199,8 @@ function GenerationPage() {
   const currentPhaseIndex = progress?.phase_index ?? 0
   const isDone = progress?.phase === 'done'
   const hasErrors = (progress?.error_count ?? 0) > 0
+  // 判断是否为增量更新（regenerate）任务
+  const isRegenerateTask = progress?.phase === 'regenerate'
 
   // 获取步骤条状态
   const getStepStatus = (index: number): 'wait' | 'process' | 'finish' | 'error' => {
@@ -204,6 +209,12 @@ function GenerationPage() {
     if (index < currentPhaseIndex) return 'finish'
     if (index === currentPhaseIndex) return isRunning ? 'process' : 'wait'
     return 'wait'
+  }
+
+  // 获取当前阶段名称（支持 regenerate）
+  const getCurrentPhaseName = () => {
+    if (isRegenerateTask) return REGENERATE_PHASE.name
+    return GENERATION_PHASES[currentPhaseIndex]?.name || '处理中'
   }
 
   return (
@@ -245,10 +256,74 @@ function GenerationPage() {
         />
       </Card>
 
+      {/* 当前任务状态 - 新增醒目卡片 */}
+      {isRunning && (
+        <Card
+          style={{
+            marginBottom: 24,
+            background: isRegenerateTask
+              ? 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)'  // 绿色渐变用于增量更新
+              : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            border: 'none'
+          }}
+        >
+          <Row align="middle" gutter={[16, 16]}>
+            <Col flex="auto">
+              <div style={{ color: 'white' }}>
+                <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 4 }}>
+                  {isRegenerateTask ? '增量更新中' : '当前阶段'}
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>
+                  {getCurrentPhaseName()}
+                </div>
+                <div style={{ fontSize: 14, opacity: 0.9 }}>
+                  <LoadingOutlined style={{ marginRight: 8 }} />
+                  {progress?.current_item
+                    ? `正在处理: ${progress.current_item}`
+                    : progress?.message || '处理中...'
+                  }
+                </div>
+                {progress?.current_item_total > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13 }}>
+                      进度: {progress.current_item_index} / {progress.current_item_total}
+                    </Text>
+                    <Progress
+                      percent={Math.round((progress.phase_progress || 0) * 100)}
+                      strokeColor="rgba(255,255,255,0.8)"
+                      trailColor="rgba(255,255,255,0.2)"
+                      showInfo={false}
+                      size="small"
+                      style={{ marginTop: 4 }}
+                    />
+                  </div>
+                )}
+              </div>
+            </Col>
+            <Col>
+              <div style={{
+                width: 80,
+                height: 80,
+                borderRadius: '50%',
+                background: 'rgba(255,255,255,0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'white',
+                fontSize: 24,
+                fontWeight: 'bold'
+              }}>
+                {Math.round((progress?.progress || 0) * 100)}%
+              </div>
+            </Col>
+          </Row>
+        </Card>
+      )}
+
       {/* 详细进度 */}
       <Card title="详细进度" style={{ marginBottom: 24 }}>
         <Row gutter={[24, 24]}>
-          {/* 当前状态 */}
+          {/* 当前状态标签 */}
           <Col span={24}>
             <Space size="large" align="center">
               <Tag
@@ -256,8 +331,17 @@ function GenerationPage() {
                 style={{ fontSize: 14, padding: '4px 12px' }}
               >
                 {isRunning && <LoadingOutlined style={{ marginRight: 8 }} />}
-                {isDone ? '✅ 已完成' : hasErrors ? '⚠️ 有错误' : progress?.message || '等待开始'}
+                {isDone ? '✅ 已完成' : hasErrors ? '⚠️ 有错误' : isRunning ? '运行中' : progress?.message || '等待开始'}
               </Tag>
+              {!isRunning && !isDone && progress?.phase && progress.phase !== 'init' && (
+                <Text type="secondary">
+                  上次停止于: {
+                    progress.phase === 'regenerate'
+                      ? REGENERATE_PHASE.name
+                      : (GENERATION_PHASES.find(p => p.id === progress.phase)?.name || progress.phase)
+                  }
+                </Text>
+              )}
             </Space>
           </Col>
 
@@ -266,7 +350,8 @@ function GenerationPage() {
             <Text type="secondary" style={{ marginBottom: 8, display: 'block' }}>整体进度</Text>
             <Progress
               percent={Math.round((progress?.progress || 0) * 100)}
-              status={isRunning ? 'active' : hasErrors ? 'exception' : undefined}
+              status={isRunning ? 'active' : hasErrors ? 'exception' : isDone ? 'success' : undefined}
+              format={(percent) => `${percent}%`}
             />
           </Col>
 
@@ -303,17 +388,16 @@ function GenerationPage() {
             />
           </Col>
 
-          {/* 当前场景进度 */}
-          {isRunning && progress && progress.total_scenes && progress.total_scenes > 0 && (
+          {/* 场景总进度 */}
+          {progress && progress.total_scenes > 0 && (
             <Col span={24}>
-              <Text type="secondary">当前场景: </Text>
-              <Text strong>
-                {progress.current_scene_index} / {progress.total_scenes}
+              <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+                场景总进度: {progress.current_scene_index} / {progress.total_scenes}
               </Text>
               <Progress
                 percent={Math.round((progress.current_scene_index / progress.total_scenes) * 100)}
                 size="small"
-                style={{ marginTop: 8 }}
+                strokeColor="#1890ff"
               />
             </Col>
           )}

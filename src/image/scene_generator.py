@@ -396,19 +396,37 @@ class SceneGenerator:
         style_preset: str
     ) -> str:
         """构建正向提示词
-        
+
         Z-Image-Turbo 使用 Qwen 词法分析器，对中文（尤其是成语和古诗词）
         做了专门优化，直接使用中文自然语言描述即可。
+        同时添加风格前缀以控制整体画面风格。
         """
         visual = scene.get("visual", {})
-        
+
+        # 获取风格前缀（中文描述，适配 Z-Image-Turbo）
+        style_prefix = self._get_style_prefix_chinese(style_preset)
+
         # 直接使用场景的中文描述（Z-Image-Turbo 对中文优化更好）
         description = visual.get("description", "")
-        if description:
-            return description
-        
-        # 最后回退
-        return "一幅精美的场景画面"
+        if not description:
+            description = "一幅精美的场景画面"
+
+        # 组合风格前缀和场景描述
+        if style_prefix:
+            return f"{style_prefix}，{description}"
+        return description
+
+    def _get_style_prefix_chinese(self, style_preset: str) -> str:
+        """获取中文风格前缀（适配 Z-Image-Turbo 的 Qwen 词法分析器）"""
+        presets = {
+            "anime": "动漫风格，色彩鲜艳，精美插画",
+            "realistic": "照片写实风格，电影级光影，细节丰富",
+            "illustration": "数字插画风格，概念艺术，艺术感",
+            "realistic_gufeng": "写实古风，照片级真实感，中国古代美学，汉服飘逸，古典东方韵味，柔和自然光，精致面容，皮肤质感真实，服饰纹理精细，电影级构图",
+            "chinese_fantasy": "中国仙侠风格，修仙世界，剑仙飘逸，云雾缭绕，古典建筑，白衣飘飘，灵气光环，仙山云海，史诗场景",
+            "xianxia": "仙侠风格，修真世界，御剑飞行，仙云缥缈，古风建筑，飘逸长袍，灵气环绕，仙境山峰，史诗画面"
+        }
+        return presets.get(style_preset, presets.get("realistic_gufeng", ""))
 
     def _build_negative_prompt(self, style_preset: str) -> str:
         """构建负向提示词"""

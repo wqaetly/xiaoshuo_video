@@ -249,8 +249,12 @@ class PipelineController:
             workflow_path=base_workflow if base_workflow.exists() else None,
         )
 
-        # 角色设计器
-        self._char_designer = CharacterDesigner(comfyui)
+        # 角色设计器（使用与场景生成相同的 Z-Image-Turbo 工作流）
+        char_workflow = workflow_dir / self.config.image.workflow
+        self._char_designer = CharacterDesigner(
+            comfyui,
+            workflow_path=char_workflow if char_workflow.exists() else None
+        )
         self._char_designer.reference_manager = self._reference_manager
 
         # TTS 通过 Bridge 访问（但保留兼容接口）
@@ -353,8 +357,12 @@ class PipelineController:
                 apply_to_unet=getattr(i2l_config, 'apply_to_unet', True)
             )
 
-        # 初始化角色设计器
-        self._char_designer = CharacterDesigner(comfyui)
+        # 初始化角色设计器（使用与场景生成相同的工作流）
+        char_workflow = Path("config/comfyui_workflows") / self.config.image.workflow
+        self._char_designer = CharacterDesigner(
+            comfyui,
+            workflow_path=char_workflow if char_workflow.exists() else None
+        )
         self._char_designer.reference_manager = self._reference_manager
 
         # TTS模块
@@ -429,6 +437,11 @@ class PipelineController:
             logger.info(f"从 {self.state.current_phase.value} 阶段恢复")
         else:
             self.state = PipelineState()
+
+        # 确保目录存在（无论是否恢复都需要）
+        from ..utils.file_utils import ensure_dir
+        for dir_name in ["characters", "images", "videos", "audio", "output"]:
+            ensure_dir(self.project_path / dir_name)
 
         # 无论是否恢复，都需要初始化模块
         # 因为模块实例不会被持久化到状态文件中
@@ -1247,6 +1260,11 @@ class PipelineController:
         if self.state is None:
             self.state = PipelineState.load(self.state_file) if self.state_file.exists() else PipelineState()
 
+        # 确保目录存在
+        from ..utils.file_utils import ensure_dir
+        for dir_name in ["characters", "images", "videos", "audio", "output"]:
+            ensure_dir(self.project_path / dir_name)
+
         self.init_modules()
 
         phase_methods = {
@@ -1271,6 +1289,11 @@ class PipelineController:
         """
         if self.state is None:
             self.state = PipelineState.load(self.state_file) if self.state_file.exists() else PipelineState()
+
+        # 确保目录存在
+        from ..utils.file_utils import ensure_dir
+        for dir_name in ["characters", "images", "videos", "audio", "output"]:
+            ensure_dir(self.project_path / dir_name)
 
         self.init_modules()
 
@@ -1320,6 +1343,11 @@ class PipelineController:
         if not self.state.has_invalidated_scenes():
             logger.info("没有失效的场景需要处理")
             return {"success": True, "message": "没有失效的场景", "regenerated": {}}
+
+        # 确保目录存在
+        from ..utils.file_utils import ensure_dir
+        for dir_name in ["characters", "images", "videos", "audio", "output"]:
+            ensure_dir(self.project_path / dir_name)
 
         self.init_modules()
 
@@ -1662,6 +1690,11 @@ class PipelineController:
             logger.info(f"从 {self.state.current_phase.value} 阶段恢复")
         else:
             self.state = PipelineState()
+
+        # 确保目录存在（无论是否恢复都需要）
+        from ..utils.file_utils import ensure_dir
+        for dir_name in ["characters", "images", "videos", "audio", "output"]:
+            ensure_dir(self.project_path / dir_name)
 
         try:
             phase_methods = {

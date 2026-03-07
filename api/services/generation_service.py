@@ -61,21 +61,21 @@ class GenerationService:
         async def check_ollama():
             """检查 Ollama 服务"""
             try:
-                async with httpx.AsyncClient(timeout=2.0) as client:
+                async with httpx.AsyncClient(timeout=1.0) as client:
                     response = await client.get(f"{ollama_url}/api/tags")
                     if response.status_code == 200:
                         services["ollama"]["status"] = "online"
                         services["ollama"]["model"] = ollama_model
-                        logger.info(f"服务 Ollama 在线, 模型: {ollama_model}")
+                        logger.debug(f"服务 Ollama 在线, 模型: {ollama_model}")
                     else:
-                        logger.warning(f"服务 Ollama 响应异常 (状态码: {response.status_code})")
+                        logger.debug(f"服务 Ollama 响应异常 (状态码: {response.status_code})")
             except Exception as e:
-                logger.warning(f"服务 Ollama 不可用: {e}")
+                logger.debug(f"服务 Ollama 不可用: {e}")
 
         async def check_comfyui():
             """检查 ComfyUI 服务"""
             try:
-                async with httpx.AsyncClient(timeout=2.0) as client:
+                async with httpx.AsyncClient(timeout=1.0) as client:
                     response = await client.get(f"{comfyui_url}/queue")
                     if response.status_code == 200:
                         services["comfyui"]["status"] = "online"
@@ -86,24 +86,24 @@ class GenerationService:
                             services["comfyui"]["queue_size"] = running + pending
                         except Exception:
                             pass
-                        logger.info(f"服务 ComfyUI 在线, 队列: {services['comfyui']['queue_size']}")
+                        logger.debug(f"服务 ComfyUI 在线, 队列: {services['comfyui']['queue_size']}")
                     else:
-                        logger.warning(f"服务 ComfyUI 响应异常 (状态码: {response.status_code})")
+                        logger.debug(f"服务 ComfyUI 响应异常 (状态码: {response.status_code})")
             except Exception as e:
-                logger.warning(f"服务 ComfyUI 不可用: {e}")
+                logger.debug(f"服务 ComfyUI 不可用: {e}")
 
         async def check_cosyvoice():
             """检查 CosyVoice 服务"""
             try:
-                async with httpx.AsyncClient(timeout=2.0) as client:
+                async with httpx.AsyncClient(timeout=1.0) as client:
                     response = await client.get(cosyvoice_url)
                     if response.status_code == 200:
                         services["cosyvoice"]["status"] = "online"
-                        logger.info("服务 CosyVoice 在线")
+                        logger.debug("服务 CosyVoice 在线")
                     else:
-                        logger.warning(f"服务 CosyVoice 响应异常 (状态码: {response.status_code})")
+                        logger.debug(f"服务 CosyVoice 响应异常 (状态码: {response.status_code})")
             except Exception as e:
-                logger.warning(f"服务 CosyVoice 不可用: {e}")
+                logger.debug(f"服务 CosyVoice 不可用: {e}")
 
         # 并行执行所有服务检查
         await asyncio.gather(check_ollama(), check_comfyui(), check_cosyvoice())
@@ -119,6 +119,35 @@ class GenerationService:
             return phase_order.index(phase_value)
         except ValueError:
             return 0
+
+    def _parse_progress_message(self, message: str) -> Dict[str, Any]:
+        """解析进度消息，提取当前处理项和进度
+
+        消息格式示例：
+        - "生成 角色A (3/10)"
+        - "生成场景 scene_01_003 (5/20)"
+        - "处理音频 (8/15)"
+        """
+        import re
+        result = {
+            "current_item": "",
+            "current_item_index": 0,
+            "current_item_total": 0,
+        }
+
+        # 匹配 "(x/y)" 格式
+        match = re.search(r'\((\d+)/(\d+)\)', message)
+        if match:
+            result["current_item_index"] = int(match.group(1))
+            result["current_item_total"] = int(match.group(2))
+
+        # 尝试提取当前处理项名称
+        # 匹配 "生成 XXX (" 或 "处理 XXX ("
+        name_match = re.search(r'(?:生成|处理|合成)\s+(.+?)\s*\(', message)
+        if name_match:
+            result["current_item"] = name_match.group(1).strip()
+
+        return result
 
     def _build_progress_response(
         self,
@@ -136,6 +165,12 @@ class GenerationService:
             "progress": 0.0,
             "message": "",
             "is_running": is_running,
+            # 新增：当前阶段详细进度
+            "phase_progress": 0.0,
+            "current_item": "",
+            "current_item_index": 0,
+            "current_item_total": 0,
+            # 场景进度
             "current_scene_index": 0,
             "total_scenes": 0,
             "completed_tasks": {
@@ -185,6 +220,18 @@ class GenerationService:
             response["task"] = task.phase
             response["progress"] = task.progress
             response["message"] = task.message
+
+            # 解析消息提取详细进度
+            parsed = self._parse_progress_message(task.message)
+            response["current_item"] = parsed["current_item"]
+            response["current_item_index"] = parsed["current_item_index"]
+            response["current_item_total"] = parsed["current_item_total"]
+
+            # 计算当前阶段进度
+            if parsed["current_item_total"] > 0:
+                response["phase_progress"] = parsed["current_item_index"] / parsed["current_item_total"]
+            else:
+                response["phase_progress"] = task.progress  # 回退到整体进度
 
         return response
 

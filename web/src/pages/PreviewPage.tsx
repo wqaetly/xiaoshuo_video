@@ -123,13 +123,13 @@ function PreviewPage() {
               }}>
                 {currentScene?.generation_status?.video === 'completed' && currentScene?.video_path ? (
                   <video
-                    src={`/api/media/${currentScene.video_path}`}
+                    src={`/api/files/media/${currentScene.video_path}`}
                     style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                     controls
                   />
                 ) : currentScene?.generation_status?.image === 'completed' && currentScene?.image_path ? (
                   <Image
-                    src={`/api/media/${currentScene.image_path}`}
+                    src={`/api/files/media/${currentScene.image_path}`}
                     style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
                     preview={false}
                   />

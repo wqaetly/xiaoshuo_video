@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import {
   Card,
   Row,
@@ -29,6 +29,8 @@ import {
   SyncOutlined,
   ExclamationCircleOutlined,
   UploadOutlined,
+  PictureOutlined,
+  LoadingOutlined,
 } from '@ant-design/icons'
 import { sceneApi, InvalidationStatus } from '../api/scenes'
 import { projectApi } from '../api/projects'
@@ -39,6 +41,7 @@ const { Title, Text, Paragraph } = Typography
 
 function ScenesPage() {
   const { projectName } = useParams<{ projectName: string }>()
+  const navigate = useNavigate()
   const [scenes, setScenes] = useState<Scene[]>([])
   const [loading, setLoading] = useState(true)
   const [editModalVisible, setEditModalVisible] = useState(false)
@@ -52,6 +55,9 @@ function ScenesPage() {
   const [updateNovelModalVisible, setUpdateNovelModalVisible] = useState(false)
   const [uploadFileList, setUploadFileList] = useState<UploadFile[]>([])
   const [uploading, setUploading] = useState(false)
+
+  // 单个场景生成状态（记录正在生成的场景ID集合）
+  const [regeneratingScenes, setRegeneratingScenes] = useState<Set<string>>(new Set())
 
   const fetchScenes = async () => {
     if (!projectName) return
@@ -158,6 +164,38 @@ function ScenesPage() {
       fetchScenes()
     } catch (error) {
       showApiError(error, '删除失败')
+    }
+  }
+
+  // 为单个场景生成图片
+  const handleRegenerateImage = async (sceneId: string) => {
+    if (!projectName) return
+    try {
+      // 标记该场景正在生成
+      setRegeneratingScenes(prev => new Set(prev).add(sceneId))
+      message.loading({ content: `正在启动场景 ${sceneId} 图片生成...`, key: sceneId, duration: 0 })
+
+      const result = await sceneApi.regenerate(projectName, [sceneId], ['image'])
+
+      if (result.success) {
+        message.success({ content: '任务已启动，正在跳转到进度页面...', key: sceneId, duration: 1 })
+        // 自动跳转到生成控制页面查看进度
+        setTimeout(() => {
+          navigate(`/projects/${projectName}/generation`)
+        }, 500)
+      } else {
+        message.error({ content: result.message || '生成失败', key: sceneId })
+      }
+    } catch (error) {
+      message.destroy(sceneId)
+      showApiError(error, '生成图片失败')
+    } finally {
+      // 移除生成中状态
+      setRegeneratingScenes(prev => {
+        const next = new Set(prev)
+        next.delete(sceneId)
+        return next
+      })
     }
   }
 
@@ -279,7 +317,7 @@ function ScenesPage() {
               <Card
                 cover={
                   scene.generation_status?.image === 'completed' && scene.image_path ? (
-                    <Image src={`/api/media/${scene.image_path}`} alt={`场景 ${scene.global_index}`} height={160} style={{ objectFit: 'cover' }} />
+                    <Image src={`/api/files/media/${scene.image_path}`} alt={`场景 ${scene.global_index}`} height={160} style={{ objectFit: 'cover' }} />
                   ) : (
                     <div style={{ height: 160, background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Text type="secondary">暂无图片</Text>
@@ -287,6 +325,21 @@ function ScenesPage() {
                   )
                 }
                 actions={[
+                  // 生成图片按钮
+                  regeneratingScenes.has(scene.id) ? (
+                    <LoadingOutlined key="regenerate" spin style={{ color: '#1890ff' }} />
+                  ) : (
+                    <Popconfirm
+                      key="regenerate"
+                      title="生成图片"
+                      description="确定要为该场景生成/重新生成图片吗？"
+                      onConfirm={() => handleRegenerateImage(scene.id)}
+                      okText="确定"
+                      cancelText="取消"
+                    >
+                      <PictureOutlined style={{ color: '#52c41a' }} />
+                    </Popconfirm>
+                  ),
                   <EditOutlined key="edit" onClick={() => handleEdit(scene)} />,
                   <Popconfirm key="delete" title="确定删除?" onConfirm={() => handleDelete(scene.id)}>
                     <DeleteOutlined />

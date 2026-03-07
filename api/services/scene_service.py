@@ -81,18 +81,25 @@ class SceneService:
         Args:
             project_name: 项目名
             scene_id: 场景ID
-            modified_fields: 被修改的字段集合
+            modified_fields: 被修改的字段集合，或直接的资源类型集合
         """
         state = self._load_pipeline_state(project_name)
         if state is None:
             # 还没有生成过，不需要失效
             return
 
+        # 合法的资源类型
+        valid_resource_types = {"image", "audio", "video"}
+
         # 收集需要失效的资源类型
         task_types_to_invalidate: Set[str] = set()
         for field in modified_fields:
             if field in FIELD_DEPENDENCIES:
+                # 通过字段依赖推导资源类型
                 task_types_to_invalidate.update(FIELD_DEPENDENCIES[field])
+            elif field in valid_resource_types:
+                # 直接指定的资源类型（如从 regenerate API 调用）
+                task_types_to_invalidate.add(field)
 
         if not task_types_to_invalidate:
             return
@@ -116,12 +123,51 @@ class SceneService:
 
         scenes = storyboard.get("scenes", [])
         chapters_set = set()
+        project_path = self.projects_dir / project_name
 
-        # 收集所有章节
+        # 收集所有章节，并动态更新资源路径和状态
         for s in scenes:
             ch = s.get("chapter")
             if ch is not None:
                 chapters_set.add(ch)
+
+            # 动态检查资源文件是否存在，更新路径和状态
+            scene_id = s.get("id", "")
+            if scene_id:
+                # 初始化 generation_status（如果不存在）
+                if "generation_status" not in s:
+                    s["generation_status"] = {"image": "pending", "audio": "pending", "video": "pending"}
+
+                # 检查图像
+                image_path = project_path / "images" / f"{scene_id}.png"
+                if image_path.exists():
+                    s["image_path"] = f"projects/{project_name}/images/{scene_id}.png"
+                    s["generation_status"]["image"] = "completed"
+                else:
+                    s["image_path"] = None
+                    # 保持原状态或设为 pending（如果之前是 completed 但文件不存在）
+                    if s["generation_status"].get("image") == "completed":
+                        s["generation_status"]["image"] = "pending"
+
+                # 检查音频
+                audio_path = project_path / "audio" / f"{scene_id}.wav"
+                if audio_path.exists():
+                    s["audio_path"] = f"projects/{project_name}/audio/{scene_id}.wav"
+                    s["generation_status"]["audio"] = "completed"
+                else:
+                    s["audio_path"] = None
+                    if s["generation_status"].get("audio") == "completed":
+                        s["generation_status"]["audio"] = "pending"
+
+                # 检查视频
+                video_path = project_path / "videos" / f"{scene_id}.mp4"
+                if video_path.exists():
+                    s["video_path"] = f"projects/{project_name}/videos/{scene_id}.mp4"
+                    s["generation_status"]["video"] = "completed"
+                else:
+                    s["video_path"] = None
+                    if s["generation_status"].get("video") == "completed":
+                        s["generation_status"]["video"] = "pending"
 
         # 过滤
         if chapter is not None:

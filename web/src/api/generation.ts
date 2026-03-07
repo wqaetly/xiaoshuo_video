@@ -25,9 +25,15 @@ export interface GenerationProgress {
   phase_index: number
   total_phases: number
   task: string
-  progress: number
+  progress: number  // 整体进度 0.0 - 1.0
   message: string
   is_running: boolean
+  // 当前阶段详细进度
+  phase_progress: number  // 当前阶段进度 0.0 - 1.0
+  current_item: string    // 当前处理项（如角色名、场景ID）
+  current_item_index: number  // 当前处理第几个
+  current_item_total: number  // 当前阶段总数
+  // 场景进度
   current_scene_index: number
   total_scenes: number
   completed_tasks: CompletedTasks

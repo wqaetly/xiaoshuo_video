@@ -37,17 +37,27 @@ async def lifespan(app: FastAPI):
     generation_service = get_generation_service()
     ws_manager = get_connection_manager()
 
+    # 保存主事件循环引用，用于跨线程调度
+    main_loop = asyncio.get_running_loop()
+
     def on_progress_update(project_name: str, progress_data: dict):
-        """进度更新时广播到 WebSocket（按项目隔离）"""
+        """进度更新时广播到 WebSocket（按项目隔离）
+
+        注意：此回调从生成任务线程中调用，需要跨线程调度到主事件循环
+        """
         try:
-            # 在异步上下文中发送，只通知订阅该项目的连接
-            asyncio.create_task(ws_manager.send_progress(
-                project_name=project_name,
-                phase=progress_data.get("phase", ""),
-                task=progress_data.get("task", ""),
-                progress=progress_data.get("progress", 0.0),
-                message=progress_data.get("message", ""),
-            ))
+            # 使用 run_coroutine_threadsafe 从工作线程调度到主事件循环
+            future = asyncio.run_coroutine_threadsafe(
+                ws_manager.send_progress(
+                    project_name=project_name,
+                    phase=progress_data.get("phase", ""),
+                    task=progress_data.get("task", ""),
+                    progress=progress_data.get("progress", 0.0),
+                    message=progress_data.get("message", ""),
+                ),
+                main_loop
+            )
+            # 不阻塞等待结果，让协程异步执行
         except Exception as e:
             api_logger.error(f"WebSocket 广播失败: {e}")
 

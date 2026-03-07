@@ -65,10 +65,17 @@ class GenerationProgress(BaseModel):
     phase_index: int = 0  # 当前阶段索引 (0-7)
     total_phases: int = 7  # 总阶段数
     task: str
-    progress: float  # 0.0 - 1.0
+    progress: float  # 0.0 - 1.0 (整体进度)
     message: str
     is_running: bool = False
-    # 场景级进度
+    # 当前阶段进度（0.0 - 1.0）
+    phase_progress: float = 0.0
+    # 当前正在处理的项（如场景ID、角色名等）
+    current_item: str = ""
+    # 当前阶段处理的项：已完成/总数
+    current_item_index: int = 0
+    current_item_total: int = 0
+    # 场景级进度（保持兼容）
     current_scene_index: int = 0
     total_scenes: int = 0
     # 各类型任务完成情况

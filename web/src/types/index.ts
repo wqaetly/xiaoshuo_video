@@ -39,6 +39,13 @@ export const GENERATION_PHASES: PhaseInfo[] = [
   { id: 'compose', name: '合成', description: '合成最终视频' },
 ]
 
+// 增量更新阶段（单独的任务类型，不在主流程步骤条中显示）
+export const REGENERATE_PHASE: PhaseInfo = {
+  id: 'regenerate',
+  name: '增量更新',
+  description: '重新生成选定场景的资源',
+}
+
 export interface ProjectStats {
   total_scenes: number
   completed_scenes: number

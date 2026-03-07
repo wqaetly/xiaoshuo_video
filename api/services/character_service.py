@@ -190,9 +190,17 @@ class CharacterService:
             return None
 
         try:
+            from pathlib import Path
             from src.image import ComfyUIClient, CharacterDesigner
+
             comfyui = ComfyUIClient(base_url=self.config.local.comfyui_url)
-            designer = CharacterDesigner(comfyui)
+
+            # 使用 Z-Image-Turbo 工作流
+            workflow_path = Path("config/comfyui_workflows") / self.config.image.workflow
+            designer = CharacterDesigner(
+                comfyui,
+                workflow_path=workflow_path if workflow_path.exists() else None
+            )
 
             output_dir = self.projects_dir / project_name / "characters"
             results = designer.generate_character(char, output_dir)

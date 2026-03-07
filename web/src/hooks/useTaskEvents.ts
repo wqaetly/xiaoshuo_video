@@ -70,15 +70,25 @@ export function useTaskEvents(options: UseTaskEventsOptions = {}): UseTaskEvents
 
   const [isConnected, setIsConnected] = useState(false)
   const [events, setEvents] = useState<TaskEvent[]>([])
-  
+
   const eventSourceRef = useRef<EventSource | null>(null)
   const reconnectAttemptsRef = useRef(0)
   const reconnectTimerRef = useRef<number | null>(null)
+
+  // 使用 ref 存储回调函数，避免它们的变化触发 useEffect 重新执行
+  const callbacksRef = useRef({ onEvent, onConnect, onDisconnect, onError })
+  callbacksRef.current = { onEvent, onConnect, onDisconnect, onError }
 
   const connect = useCallback(() => {
     // 避免重复连接
     if (eventSourceRef.current?.readyState === EventSource.OPEN) {
       return
+    }
+
+    // 关闭已有连接（如 CONNECTING 状态）
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
     }
 
     try {
@@ -89,7 +99,7 @@ export function useTaskEvents(options: UseTaskEventsOptions = {}): UseTaskEvents
         console.log('[SSE] Connected to task events stream')
         setIsConnected(true)
         reconnectAttemptsRef.current = 0
-        onConnect?.()
+        callbacksRef.current.onConnect?.()
       }
 
       // 监听 connected 事件
@@ -100,7 +110,7 @@ export function useTaskEvents(options: UseTaskEventsOptions = {}): UseTaskEvents
       // 监听各种任务事件
       const taskEventTypes: TaskEventType[] = [
         'task_created',
-        'task_started', 
+        'task_started',
         'task_progress',
         'task_completed',
         'task_failed',
@@ -111,7 +121,7 @@ export function useTaskEvents(options: UseTaskEventsOptions = {}): UseTaskEvents
           try {
             const event: TaskEvent = JSON.parse(e.data)
             setEvents(prev => [...prev.slice(-99), event]) // 保留最近100条
-            onEvent?.(event)
+            callbacksRef.current.onEvent?.(event)
           } catch (err) {
             console.error(`[SSE] Failed to parse ${eventType} event:`, err)
           }
@@ -121,9 +131,13 @@ export function useTaskEvents(options: UseTaskEventsOptions = {}): UseTaskEvents
       es.onerror = (error) => {
         console.error('[SSE] Connection error:', error)
         setIsConnected(false)
-        onError?.(error)
-        onDisconnect?.()
-        
+        callbacksRef.current.onError?.(error)
+        callbacksRef.current.onDisconnect?.()
+
+        // 关闭连接以触发重连
+        es.close()
+        eventSourceRef.current = null
+
         // 尝试重连
         if (reconnectAttemptsRef.current < maxReconnectAttempts) {
           reconnectAttemptsRef.current++
@@ -136,7 +150,7 @@ export function useTaskEvents(options: UseTaskEventsOptions = {}): UseTaskEvents
     } catch (err) {
       console.error('[SSE] Failed to create EventSource:', err)
     }
-  }, [onConnect, onDisconnect, onError, onEvent, reconnectInterval, maxReconnectAttempts])
+  }, [reconnectInterval, maxReconnectAttempts])
 
   const disconnect = useCallback(() => {
     if (reconnectTimerRef.current) {
@@ -153,6 +167,7 @@ export function useTaskEvents(options: UseTaskEventsOptions = {}): UseTaskEvents
     setEvents([])
   }, [])
 
+  // 仅在 autoConnect 变化时触发连接，不依赖 connect/disconnect 函数引用
   useEffect(() => {
     if (autoConnect) {
       connect()
@@ -160,7 +175,8 @@ export function useTaskEvents(options: UseTaskEventsOptions = {}): UseTaskEvents
     return () => {
       disconnect()
     }
-  }, [autoConnect, connect, disconnect])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoConnect])
 
   return {
     isConnected,

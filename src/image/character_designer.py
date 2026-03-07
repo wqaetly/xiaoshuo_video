@@ -161,12 +161,29 @@ class CharacterDesigner:
     def __init__(
         self,
         comfyui_client: ComfyUIClient,
+        workflow_path: Optional[Path] = None,
         default_checkpoint: str = "animagine-xl-4.0.safetensors"
     ):
         self.client = comfyui_client
         self.default_checkpoint = default_checkpoint
         # 添加参考图管理器
         self.reference_manager = CharacterReferenceManager(comfyui_client)
+
+        # 加载工作流模板（优先使用传入的工作流，否则使用默认的 Z-Image-Turbo）
+        self.workflow_template = None
+        if workflow_path and workflow_path.exists():
+            import json
+            with open(workflow_path, "r", encoding="utf-8") as f:
+                self.workflow_template = json.load(f)
+            logger.info(f"加载角色设计工作流: {workflow_path}")
+        else:
+            # 尝试加载默认的 Z-Image-Turbo 工作流
+            default_workflow = Path("config/comfyui_workflows/z_image_turbo_scene.json")
+            if default_workflow.exists():
+                import json
+                with open(default_workflow, "r", encoding="utf-8") as f:
+                    self.workflow_template = json.load(f)
+                logger.info(f"加载默认角色设计工作流: {default_workflow}")
 
     def generate_character(
         self,
@@ -250,68 +267,96 @@ class CharacterDesigner:
         width: int = 768,
         height: int = 1024
     ) -> Image.Image:
-        """生成单张图像"""
-        import random
+        """生成单张图像
 
-        workflow = {
-            "3": {
-                "class_type": "KSampler",
-                "inputs": {
-                    "cfg": 7,
-                    "denoise": 1,
-                    "latent_image": ["5", 0],
-                    "model": ["4", 0],
-                    "negative": ["7", 0],
-                    "positive": ["6", 0],
-                    "sampler_name": "euler",
-                    "scheduler": "normal",
-                    "seed": random.randint(0, 2**32 - 1),
-                    "steps": 30
-                }
-            },
-            "4": {
-                "class_type": "CheckpointLoaderSimple",
-                "inputs": {
-                    "ckpt_name": self.default_checkpoint
-                }
-            },
-            "5": {
-                "class_type": "EmptyLatentImage",
-                "inputs": {
-                    "batch_size": 1,
-                    "height": height,
-                    "width": width
-                }
-            },
-            "6": {
-                "class_type": "CLIPTextEncode",
-                "inputs": {
-                    "clip": ["4", 1],
-                    "text": positive_prompt
-                }
-            },
-            "7": {
-                "class_type": "CLIPTextEncode",
-                "inputs": {
-                    "clip": ["4", 1],
-                    "text": negative_prompt
-                }
-            },
-            "8": {
-                "class_type": "VAEDecode",
-                "inputs": {
-                    "samples": ["3", 0],
-                    "vae": ["4", 2]
-                }
-            },
-            "9": {
-                "class_type": "SaveImage",
-                "inputs": {
-                    "filename_prefix": "character",
-                    "images": ["8", 0]
+        如果有工作流模板，使用 Z-Image-Turbo 工作流；
+        否则回退到传统的 CheckpointLoaderSimple 方式（需要对应模型）
+        """
+        import random
+        import copy
+
+        # 优先使用 Z-Image-Turbo 工作流模板
+        if self.workflow_template:
+            workflow = copy.deepcopy(self.workflow_template)
+
+            # 设置提示词（Z-Image-Turbo 工作流只使用正向提示词，负向通过 ConditioningZeroOut 处理）
+            if "6" in workflow:
+                workflow["6"]["inputs"]["text"] = positive_prompt
+
+            # 设置尺寸（角色立绘使用竖版）
+            if "5" in workflow:
+                workflow["5"]["inputs"]["width"] = width
+                workflow["5"]["inputs"]["height"] = height
+
+            # 设置随机种子
+            if "3" in workflow:
+                workflow["3"]["inputs"]["seed"] = random.randint(0, 2**32 - 1)
+
+            # 修改文件名前缀
+            if "9" in workflow:
+                workflow["9"]["inputs"]["filename_prefix"] = "character"
+        else:
+            # 回退到传统工作流（需要 CheckpointLoaderSimple 支持的模型）
+            logger.warning("未找到 Z-Image-Turbo 工作流，使用传统工作流（可能不可用）")
+            workflow = {
+                "3": {
+                    "class_type": "KSampler",
+                    "inputs": {
+                        "cfg": 7,
+                        "denoise": 1,
+                        "latent_image": ["5", 0],
+                        "model": ["4", 0],
+                        "negative": ["7", 0],
+                        "positive": ["6", 0],
+                        "sampler_name": "euler",
+                        "scheduler": "normal",
+                        "seed": random.randint(0, 2**32 - 1),
+                        "steps": 30
+                    }
+                },
+                "4": {
+                    "class_type": "CheckpointLoaderSimple",
+                    "inputs": {
+                        "ckpt_name": self.default_checkpoint
+                    }
+                },
+                "5": {
+                    "class_type": "EmptyLatentImage",
+                    "inputs": {
+                        "batch_size": 1,
+                        "height": height,
+                        "width": width
+                    }
+                },
+                "6": {
+                    "class_type": "CLIPTextEncode",
+                    "inputs": {
+                        "clip": ["4", 1],
+                        "text": positive_prompt
+                    }
+                },
+                "7": {
+                    "class_type": "CLIPTextEncode",
+                    "inputs": {
+                        "clip": ["4", 1],
+                        "text": negative_prompt
+                    }
+                },
+                "8": {
+                    "class_type": "VAEDecode",
+                    "inputs": {
+                        "samples": ["3", 0],
+                        "vae": ["4", 2]
+                    }
+                },
+                "9": {
+                    "class_type": "SaveImage",
+                    "inputs": {
+                        "filename_prefix": "character",
+                        "images": ["8", 0]
+                    }
                 }
             }
-        }
 
         images = self.client.execute_workflow(workflow)
         if images:

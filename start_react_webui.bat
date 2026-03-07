@@ -251,19 +251,19 @@ if exist "tools\ComfyUI_windows_portable\ComfyUI" (
 )
 
 REM Check Yvann-Nodes plugin (audio reactive effects)
-if exist "tools\ComfyUI_windows_portable\ComfyUI\custom_nodes\ComfyUI_Yvann" (
+if exist "tools\ComfyUI_windows_portable\ComfyUI\custom_nodes\ComfyUI_Yvann-Nodes" (
     echo [OK] Yvann-Nodes plugin installed ^(audio reactive^)
 ) else (
     echo [Info] Installing Yvann-Nodes plugin for audio reactive effects...
     if exist "tools\ComfyUI_windows_portable\ComfyUI\custom_nodes" (
         cd /d "tools\ComfyUI_windows_portable\ComfyUI\custom_nodes"
-        git clone https://github.com/Yvann-Nodes/ComfyUI_Yvann.git 2>nul
+        git clone https://github.com/yvann-ba/ComfyUI_Yvann-Nodes.git 2>nul
         cd /d "%~dp0"
-        if exist "tools\ComfyUI_windows_portable\ComfyUI\custom_nodes\ComfyUI_Yvann" (
+        if exist "tools\ComfyUI_windows_portable\ComfyUI\custom_nodes\ComfyUI_Yvann-Nodes" (
             echo [OK] Yvann-Nodes plugin installed
         ) else (
             echo [Warning] Plugin install failed - manual install required
-            echo          https://github.com/Yvann-Nodes/ComfyUI_Yvann
+            echo          https://github.com/yvann-ba/ComfyUI_Yvann-Nodes
         )
     )
 )
@@ -409,7 +409,7 @@ if !errorlevel! neq 0 (
 )
 
 REM ========================================
-REM Step 9: Start FastAPI backend
+REM Step 9: Start services with Python script
 REM ========================================
 echo.
 echo ========================================
@@ -417,58 +417,15 @@ echo Starting services...
 echo ========================================
 echo.
 
-REM Check if port 8000 is already in use
-netstat -ano | findstr ":8000" | findstr "LISTENING" >nul 2>&1
-if !errorlevel! equ 0 (
-    echo [OK] Backend API already running on port 8000
-) else (
-    echo [1/2] Starting FastAPI backend ^(port 8000^)...
-    start /min "FastAPI Backend" cmd /c "cd /d "%~dp0" && .venv\Scripts\activate.bat && uvicorn api.main:app --host 0.0.0.0 --port 8000"
-    timeout /t 3 /nobreak >nul
-    echo       Done
-)
-
-REM ========================================
-REM Step 10: Start React frontend
-REM ========================================
-REM Check if port 3000 is already in use (configured in vite.config.ts)
-netstat -ano | findstr ":3000" | findstr "LISTENING" >nul 2>&1
-if !errorlevel! equ 0 (
-    echo [OK] Frontend already running on port 3000
-) else (
-    echo [2/2] Starting React frontend ^(port 3000^)...
-    start /min "React Frontend" cmd /c "cd /d "%~dp0web" && npm run dev"
-    timeout /t 5 /nobreak >nul
-    echo       Done
-)
-
 REM Bypass proxy for localhost
 set NO_PROXY=localhost,127.0.0.1
 set no_proxy=localhost,127.0.0.1
 
-echo.
-echo ========================================
-echo   All services started successfully!
-echo ========================================
-echo.
-echo   Frontend:  http://localhost:3000
-echo   API Docs:  http://localhost:8000/docs
-echo   ComfyUI:   http://localhost:8188
-echo   Ollama:    http://localhost:11434
-echo.
-echo ========================================
-echo.
-
-REM Wait for frontend to be ready
-echo Waiting for frontend to be ready...
-timeout /t 5 /nobreak >nul
-
-REM Open browser
-echo Opening browser...
-start "" "http://localhost:3000"
+REM Use Python script to start services (waits for backend to be ready)
+.venv\Scripts\python.exe scripts\start_webui.py
 
 echo.
-echo Press any key to exit ^(services will keep running^)...
+echo Press any key to exit...
 pause >nul
 
 :end

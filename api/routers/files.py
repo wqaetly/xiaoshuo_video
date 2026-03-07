@@ -159,3 +159,44 @@ async def delete_file(project_name: str, path: str):
         logger.error(f"删除文件失败: {e}")
         raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
 
+
+@router.get("/media/{file_path:path}")
+async def get_media_file(file_path: str):
+    """获取媒体文件（图片、音频、视频）
+
+    支持路径格式: projects/{project}/images/{scene_id}.png
+    """
+    # 构建完整路径
+    full_path = DATA_DIR / file_path
+
+    # 安全检查：确保文件在 data 目录内
+    try:
+        full_path = full_path.resolve()
+        data_dir_resolved = DATA_DIR.resolve()
+        if not str(full_path).startswith(str(data_dir_resolved)):
+            raise HTTPException(status_code=403, detail="禁止访问此路径")
+    except Exception:
+        raise HTTPException(status_code=400, detail="无效的文件路径")
+
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail=f"文件不存在: {file_path}")
+
+    if not full_path.is_file():
+        raise HTTPException(status_code=400, detail="路径不是文件")
+
+    # 根据扩展名确定 media_type
+    suffix = full_path.suffix.lower()
+    media_types = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+    }
+    media_type = media_types.get(suffix, "application/octet-stream")
+
+    return FileResponse(full_path, media_type=media_type)
