@@ -66,6 +66,7 @@ async def start_generation(request: GenerationStartRequest):
             project_name=request.project_name,
             phase=request.phase,
             resume=request.resume,
+            start_from=request.start_from,
         )
         return GenerationResult(**result)
     except ValueError as e:

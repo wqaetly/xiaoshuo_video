@@ -36,6 +36,7 @@ class GenerationStartRequest(BaseModel):
     resume: bool = True
     skip_failed: bool = True
     failure_threshold: int = 50
+    start_from: Optional[str] = None  # 从指定阶段开始执行后续所有阶段
 
 
 class GenerationStopRequest(BaseModel):

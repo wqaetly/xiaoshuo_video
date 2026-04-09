@@ -313,8 +313,25 @@ class SceneGenerator:
                 scene_id=scene_id
             )
 
-        # 执行生成
-        images = self.client.execute_workflow(workflow)
+        # 执行生成（i2L/ipadapter 失败时自动降级到基础工作流）
+        try:
+            images = self.client.execute_workflow(workflow)
+        except Exception as e:
+            if method != "none":
+                logger.warning(
+                    f"场景 {scene_id} 使用 {method} 工作流失败: {e}，降级到基础工作流"
+                )
+                workflow = self._build_workflow(
+                    positive_prompt=positive_prompt,
+                    negative_prompt=negative_prompt,
+                    width=width,
+                    height=height,
+                    seed=seed,
+                    scene_id=scene_id
+                )
+                images = self.client.execute_workflow(workflow)
+            else:
+                raise
 
         if images:
             return images[0]

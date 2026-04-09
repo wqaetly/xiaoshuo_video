@@ -94,8 +94,13 @@ class ComfyUIClient:
 
     def queue_prompt(self, workflow: Dict[str, Any]) -> str:
         """提交工作流到队列"""
+        # 过滤掉非节点的元数据键（如 _meta），ComfyUI 会将其误认为节点
+        clean_workflow = {
+            k: v for k, v in workflow.items()
+            if isinstance(v, dict) and "class_type" in v
+        }
         payload = {
-            "prompt": workflow,
+            "prompt": clean_workflow,
             "client_id": self.client_id
         }
 
@@ -105,6 +110,13 @@ class ComfyUIClient:
                 json=payload,
                 timeout=60
             )
+            if response.status_code != 200:
+                # 记录 ComfyUI 返回的详细错误信息用于调试
+                try:
+                    error_body = response.json()
+                    logger.error(f"ComfyUI 拒绝工作流 (HTTP {response.status_code}): {error_body}")
+                except Exception:
+                    logger.error(f"ComfyUI 拒绝工作流 (HTTP {response.status_code}): {response.text[:500]}")
             response.raise_for_status()
             data = response.json()
             prompt_id = data.get("prompt_id")

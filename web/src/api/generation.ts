@@ -83,11 +83,13 @@ export const generationApi = {
   start: (projectName: string, options?: {
     phase?: string
     resume?: boolean
+    start_from?: string
   }): Promise<{ task_id: string }> => {
     return apiClient.post('/generation/start', {
       project_name: projectName,
       phase: options?.phase || 'full',
       resume: options?.resume ?? true,
+      start_from: options?.start_from,
     })
   },
 

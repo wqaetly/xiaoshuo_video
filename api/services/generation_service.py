@@ -434,6 +434,7 @@ class GenerationService:
         project_name: str,
         phase: str = "full",
         resume: bool = True,
+        start_from: Optional[str] = None,
     ) -> Dict[str, Any]:
         """启动生成任务"""
         # 检查项目是否存在
@@ -463,7 +464,11 @@ class GenerationService:
 
                 # 设置进度回调
                 def on_progress(phase_name: str, message: str, progress: float):
-                    task.current_phase = phase_name
+                    # 使用 controller.state 的英文枚举值，避免中文 phase_name 导致 phase_index 匹配失败
+                    if controller.state:
+                        task.current_phase = controller.state.current_phase.value
+                    else:
+                        task.current_phase = phase_name
                     task.message = message
                     task.progress = progress
                     if self.on_progress_callback:
@@ -472,7 +477,10 @@ class GenerationService:
                 controller.on_progress = on_progress
 
                 # 执行生成
-                if phase == "full":
+                if start_from:
+                    # 从指定阶段开始，执行后续所有阶段
+                    controller.run_from_phase(Phase(start_from))
+                elif phase == "full":
                     controller.run(resume=resume)
                 else:
                     controller.run_phase(Phase(phase))

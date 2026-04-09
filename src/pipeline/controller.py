@@ -479,7 +479,14 @@ class PipelineController:
         # 加载或创建状态
         if resume and self.state_file.exists():
             self.state = PipelineState.load(self.state_file)
-            logger.info(f"从 {self.state.current_phase.value} 阶段恢复")
+            # 如果之前已完成(done)或出错(error)，从头开始新一轮生成
+            if self.state.current_phase in (Phase.DONE, Phase.ERROR):
+                logger.info(f"上一轮为 {self.state.current_phase.value} 状态，重新开始生成")
+                old_seed = self.state.base_seed  # 保留基础种子
+                self.state = PipelineState()
+                self.state.base_seed = old_seed
+            else:
+                logger.info(f"从 {self.state.current_phase.value} 阶段恢复")
         else:
             self.state = PipelineState()
 
@@ -1396,6 +1403,9 @@ class PipelineController:
         Args:
             start_phase: 起始阶段
         """
+        self._stop_requested = False
+        self._is_running = True
+
         if self.state is None:
             self.state = PipelineState.load(self.state_file) if self.state_file.exists() else PipelineState()
 
@@ -1406,15 +1416,28 @@ class PipelineController:
 
         self.init_modules()
 
-        phase_methods = {
-            Phase.INIT: self._phase_init,
-            Phase.ANALYZE: self._phase_analyze,
-            Phase.CHARACTER_DESIGN: self._phase_character_design,
-            Phase.GENERATE_IMAGES: self._phase_generate_images,
-            Phase.GENERATE_AUDIO: self._phase_generate_audio,
-            Phase.GENERATE_VIDEO: self._phase_generate_video,
-            Phase.COMPOSE: self._phase_compose,
-        }
+        # 根据配置选择并行或串行模式
+        use_parallel = getattr(self.config.generation, 'enable_parallel', True)
+        if use_parallel:
+            phase_methods = {
+                Phase.INIT: self._phase_init,
+                Phase.ANALYZE: self._phase_analyze,
+                Phase.CHARACTER_DESIGN: self._phase_character_design,
+                Phase.GENERATE_IMAGES: self._phase_generate_images_parallel,
+                Phase.GENERATE_AUDIO: self._phase_generate_audio_parallel,
+                Phase.GENERATE_VIDEO: self._phase_generate_video,
+                Phase.COMPOSE: self._phase_compose,
+            }
+        else:
+            phase_methods = {
+                Phase.INIT: self._phase_init,
+                Phase.ANALYZE: self._phase_analyze,
+                Phase.CHARACTER_DESIGN: self._phase_character_design,
+                Phase.GENERATE_IMAGES: self._phase_generate_images,
+                Phase.GENERATE_AUDIO: self._phase_generate_audio,
+                Phase.GENERATE_VIDEO: self._phase_generate_video,
+                Phase.COMPOSE: self._phase_compose,
+            }
 
         phase_order = list(Phase)
         start_idx = phase_order.index(start_phase)
@@ -1423,6 +1446,7 @@ class PipelineController:
             for phase in phase_order[start_idx:]:
                 if phase in [Phase.DONE, Phase.ERROR]:
                     continue
+                self._check_stop()
                 if phase in phase_methods:
                     self._set_phase(phase)
                     phase_methods[phase]()
@@ -1431,12 +1455,18 @@ class PipelineController:
             self._set_phase(Phase.DONE)
             logger.info("🎉 视频生成完成!")
             self._report_progress("完成", "视频已生成", 1.0)
+        except StopRequestedException:
+            logger.info("任务已被用户停止")
+            self._report_progress(self.state.current_phase.value, "任务已停止", 0.0)
+            self._save_state()
         except Exception as e:
             logger.error(f"Pipeline执行错误: {e}")
             self.state.add_error(self.state.current_phase.value, None, str(e))
             self._set_phase(Phase.ERROR)
             self._save_state()
             raise
+        finally:
+            self._is_running = False
 
     def run_invalidated_only(self) -> Dict[str, Any]:
         """仅处理失效的场景

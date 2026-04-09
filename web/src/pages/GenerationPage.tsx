@@ -18,6 +18,8 @@ import {
   Collapse,
   Badge,
   Empty,
+  Dropdown,
+  Modal,
 } from 'antd'
 import {
   PlayCircleOutlined,
@@ -34,6 +36,7 @@ import {
   ThunderboltOutlined,
   ClockCircleOutlined,
   SyncOutlined,
+  RightOutlined,
 } from '@ant-design/icons'
 import { generationApi, ServiceStatus, GenerationProgress } from '../api/generation'
 import { createWebSocket, WSMessage, MicroTask } from '../api/websocket'
@@ -179,6 +182,28 @@ function GenerationPage() {
     }
   }
 
+  const handleStartFrom = async (phaseId: string, phaseName: string) => {
+    if (!projectName) return
+    Modal.confirm({
+      title: '从指定阶段重试',
+      content: `确认从「${phaseName}」阶段开始，执行后续所有阶段？之前该阶段及后续阶段的产物会被重新生成。`,
+      okText: '确认开始',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          setStarting(true)
+          await generationApi.start(projectName, { start_from: phaseId })
+          message.success(`已从「${phaseName}」阶段开始生成`)
+          fetchProgress()
+        } catch (error) {
+          showApiError(error, '启动生成任务失败')
+        } finally {
+          setStarting(false)
+        }
+      },
+    })
+  }
+
   // 服务排查建议
   const getServiceTip = (name: string): string => {
     switch (name) {
@@ -322,7 +347,27 @@ function GenerationPage() {
       </Card>
 
       {/* 阶段步骤条 */}
-      <Card title="生成阶段" style={{ marginBottom: 24 }}>
+      <Card title="生成阶段" style={{ marginBottom: 24 }} extra={
+        !isRunning && progress && progress.phase !== 'init' && (
+          <Dropdown
+            menu={{
+              items: GENERATION_PHASES
+                .filter(p => p.id !== 'init')
+                .map(p => ({
+                  key: p.id,
+                  label: `从「${p.name}」开始`,
+                  icon: <RightOutlined />,
+                })),
+              onClick: ({ key }) => {
+                const phase = GENERATION_PHASES.find(p => p.id === key)
+                if (phase) handleStartFrom(phase.id, phase.name)
+              },
+            }}
+          >
+            <Button size="small" icon={<ReloadOutlined />}>从指定阶段重试</Button>
+          </Dropdown>
+        )
+      }>
         <Steps
           current={currentPhaseIndex}
           size="small"
