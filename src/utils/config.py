@@ -111,8 +111,24 @@ class ImageConfig(BaseModel):
     ipadapter: IPAdapterConfig = Field(default_factory=IPAdapterConfig, description="IP-Adapter 配置")
 
 
+class LocalVideoConfig(BaseModel):
+    """本地视频生成配置"""
+    workflow: str = Field(default="wan2_i2v.json", description="ComfyUI 工作流文件名")
+    model: str = Field(default="wan2.1_i2v_480p_bf16.safetensors", description="模型文件名")
+    video_length: int = Field(default=81, ge=1, description="默认帧数")
+    fps: int = Field(default=16, ge=1, le=60, description="输出帧率")
+    width: int = Field(default=832, ge=1, description="视频宽度")
+    height: int = Field(default=480, ge=1, description="视频高度")
+    steps: int = Field(default=30, ge=1, description="采样步数")
+    cfg: float = Field(default=5.0, ge=0, description="CFG Scale")
+
+
 class VideoConfig(BaseModel):
     """视频配置"""
+    provider: str = Field(
+        default="api",
+        description="视频生成方式: local / api"
+    )
     resolution: str = Field(
         default="1280x720",
         pattern=r"^\d+x\d+$",
@@ -127,6 +143,10 @@ class VideoConfig(BaseModel):
     style: str = Field(
         default="anime",
         description="视觉风格"
+    )
+    local: Optional[LocalVideoConfig] = Field(
+        default_factory=LocalVideoConfig,
+        description="本地视频生成配置"
     )
 
 
