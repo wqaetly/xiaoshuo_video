@@ -62,6 +62,10 @@ class ImagePhaseHandler(BasePhaseHandler):
         # 加载角色参考图
         self._load_character_references(characters)
         
+        # 确保基础种子
+        from ...image.scene_generator import derive_scene_seed
+        base_seed = self.controller._ensure_base_seed()
+        
         # 获取失效场景
         invalidated = set(ctx.state.get_invalidated_scenes("image"))
         if invalidated:
@@ -86,13 +90,15 @@ class ImagePhaseHandler(BasePhaseHandler):
             self.report_progress(f"{action}场景 {scene_id} ({i+1}/{total})", i / total)
             
             try:
+                scene_seed = derive_scene_seed(base_seed, scene_id)
                 if use_tracking:
-                    image = self.controller._generate_image_tracked(scene, characters)
+                    image = self.controller._generate_image_tracked(scene, characters, seed=scene_seed)
                 else:
                     image = self.controller._image_gen.generate_scene(
                         scene,
                         characters,
-                        style_preset=self.controller.config.video.style
+                        style_preset=self.controller.config.video.style,
+                        seed=scene_seed
                     )
                 
                 image.save(ctx.project_path / "images" / f"{scene_id}.png")
@@ -149,6 +155,10 @@ class ImagePhaseHandler(BasePhaseHandler):
         # 加载角色参考图
         self._load_character_references(characters)
 
+        # 确保基础种子
+        from ...image.scene_generator import derive_scene_seed
+        base_seed = self.controller._ensure_base_seed()
+
         pending_scenes = [
             s for s in scenes
             if not ctx.state.is_scene_completed(s["id"], "image")
@@ -168,7 +178,8 @@ class ImagePhaseHandler(BasePhaseHandler):
                 image = self.controller._image_gen.generate_scene(
                     scene,
                     characters,
-                    style_preset=self.controller.config.video.style
+                    style_preset=self.controller.config.video.style,
+                    seed=derive_scene_seed(base_seed, scene_id)
                 )
                 image.save(ctx.project_path / "images" / f"{scene_id}.png")
                 return {"scene_id": scene_id, "success": True, "error": None}

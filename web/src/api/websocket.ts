@@ -2,12 +2,27 @@
  * WebSocket 连接管理 - 用于实时进度推送
  */
 
-export type WSMessageType = 'connected' | 'progress' | 'log' | 'task_update' | 'heartbeat' | 'pong'
+export type WSMessageType = 'connected' | 'progress' | 'log' | 'task_update' | 'micro_task_update' | 'heartbeat' | 'pong'
+
+// 微任务状态
+export interface MicroTask {
+  task_id: string
+  project_name: string
+  task_type: string  // image, audio, character, video, regenerate, mixed
+  target_ids: string[]
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  progress: number
+  message: string
+  created_at: string
+  started_at?: string
+  completed_at?: string
+  error?: string
+}
 
 export interface WSMessage {
   type: WSMessageType
   timestamp?: string
-  // progress 消息字段
+  // progress 消息字段（全局流程）
   phase?: string
   task?: string
   progress?: number
@@ -20,6 +35,8 @@ export interface WSMessage {
   status?: string
   // connected 消息字段
   project?: string
+  // micro_task_update 消息字段
+  micro_task?: MicroTask
 }
 
 export interface WSOptions {

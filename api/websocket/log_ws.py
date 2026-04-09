@@ -128,6 +128,28 @@ class ConnectionManager:
         else:
             await self.broadcast_global(task_entry)
 
+    async def send_micro_task_update(
+        self,
+        project_name: str,
+        micro_task: dict,
+    ) -> None:
+        """发送微任务进度更新（按项目广播）
+
+        微任务是独立于全局流程的小任务，有独立的进度跟踪。
+        前端应将此消息与全局进度分开展示。
+
+        Args:
+            project_name: 项目名称
+            micro_task: 微任务数据字典
+        """
+        micro_task_entry = {
+            "type": "micro_task_update",
+            "timestamp": datetime.now().isoformat(),
+            "project": project_name,
+            "micro_task": micro_task,
+        }
+        await self.broadcast_project(project_name, micro_task_entry)
+
     def get_connection_count(self, project_name: Optional[str] = None) -> int:
         """获取连接数量"""
         if project_name:

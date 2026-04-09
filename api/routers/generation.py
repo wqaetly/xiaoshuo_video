@@ -84,8 +84,27 @@ async def stop_generation(request: GenerationStopRequest):
 
 @router.get("/progress/{project_name}", response_model=GenerationProgress)
 async def get_progress(project_name: str):
-    """获取生成进度"""
+    """获取生成进度（全局流程）"""
     service = get_generation_service()
     progress = service.get_progress(project_name)
     return GenerationProgress(**progress)
+
+
+@router.get("/micro-tasks/{project_name}")
+async def get_micro_tasks(project_name: str, active_only: bool = False):
+    """获取微任务列表
+
+    微任务是独立于全局流程的小任务，如单独重新生成某个场景的图片。
+    每个微任务有独立的进度跟踪。
+
+    Args:
+        project_name: 项目名称
+        active_only: 是否只返回活跃任务（pending/running）
+    """
+    service = get_generation_service()
+    if active_only:
+        tasks = service.get_active_micro_tasks(project_name)
+    else:
+        tasks = service.get_micro_tasks(project_name)
+    return {"tasks": tasks, "count": len(tasks)}
 

@@ -61,7 +61,25 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             api_logger.error(f"WebSocket 广播失败: {e}")
 
+    def on_micro_task_update(project_name: str, micro_task):
+        """微任务进度更新时广播到 WebSocket
+
+        微任务是独立的小任务（如重新生成单张图片），
+        与全局流程分开展示，有独立的进度条。
+        """
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                ws_manager.send_micro_task_update(
+                    project_name=project_name,
+                    micro_task=micro_task.to_dict() if hasattr(micro_task, 'to_dict') else micro_task,
+                ),
+                main_loop
+            )
+        except Exception as e:
+            api_logger.error(f"WebSocket 微任务广播失败: {e}")
+
     generation_service.on_progress_callback = on_progress_update
+    generation_service.on_micro_task_callback = on_micro_task_update
 
     api_logger.info("FastAPI 应用启动完成")
     yield

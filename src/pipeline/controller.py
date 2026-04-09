@@ -240,14 +240,59 @@ class PipelineController:
         # 初始化角色参考图管理器
         self._reference_manager = CharacterReferenceManager(comfyui, self.project_path)
 
-        # 简化的图像生成器初始化（使用默认工作流）
+        # 获取角色一致性配置 (与传统模式相同)
+        char_consistency = getattr(self.config.image, 'character_consistency', None)
+        consistency_method = char_consistency.method if char_consistency else "none"
+
+        ipadapter_config = getattr(self.config.image, 'ipadapter', None)
+        ipadapter_enabled = ipadapter_config.enabled if ipadapter_config else False
+
+        i2l_config = getattr(self.config.image, 'i2l', None)
+        i2l_enabled = i2l_config.enabled if i2l_config else False
+
+        # 配置工作流路径
         workflow_dir = Path("config/comfyui_workflows")
         base_workflow = workflow_dir / self.config.image.workflow
+        ipadapter_workflow = None
+        i2l_workflow = None
 
+        if ipadapter_enabled and ipadapter_config:
+            ipadapter_workflow_name = getattr(ipadapter_config, 'workflow', 'z_image_turbo_ipadapter.json')
+            ipadapter_workflow = workflow_dir / ipadapter_workflow_name
+
+        if i2l_enabled and i2l_config:
+            i2l_workflow_name = getattr(i2l_config, 'workflow', 'z_image_i2l.json')
+            i2l_workflow = workflow_dir / i2l_workflow_name
+
+        # 决定是否启用参考图管理器
+        use_reference_manager = (consistency_method != "none") and (ipadapter_enabled or i2l_enabled)
+
+        # 初始化场景生成器 (包含角色一致性配置)
         self._image_gen = SceneGenerator(
             comfyui,
             workflow_path=base_workflow if base_workflow.exists() else None,
+            ipadapter_workflow_path=ipadapter_workflow if ipadapter_workflow and ipadapter_workflow.exists() else None,
+            i2l_workflow_path=i2l_workflow if i2l_workflow and i2l_workflow.exists() else None,
+            reference_manager=self._reference_manager if use_reference_manager else None,
+            consistency_method=consistency_method
         )
+
+        # 配置 IP-Adapter 参数
+        if ipadapter_enabled and ipadapter_config:
+            self._image_gen.configure_ipadapter(
+                weight=getattr(ipadapter_config, 'weight', 0.8),
+                noise=getattr(ipadapter_config, 'noise', 0.0),
+                weight_type=getattr(ipadapter_config, 'weight_type', 'standard'),
+                start_at=getattr(ipadapter_config, 'start_at', 0.0),
+                end_at=getattr(ipadapter_config, 'end_at', 1.0)
+            )
+
+        # 配置 i2L 参数
+        if i2l_enabled and i2l_config:
+            self._image_gen.configure_i2l(
+                lora_strength=getattr(i2l_config, 'lora_strength', 1.0),
+                apply_to_unet=getattr(i2l_config, 'apply_to_unet', True)
+            )
 
         # 角色设计器（使用与场景生成相同的 Z-Image-Turbo 工作流）
         char_workflow = workflow_dir / self.config.image.workflow
@@ -628,6 +673,10 @@ class PipelineController:
         # 加载角色参考图 (用于 IP-Adapter 角色一致性)
         self._load_character_references(characters)
 
+        # 确保基础种子存在（用于派生每个场景的确定性种子）
+        from ..image.scene_generator import derive_scene_seed
+        base_seed = self._ensure_base_seed()
+
         # 获取失效的场景列表
         invalidated = set(self.state.get_invalidated_scenes("image"))
         if invalidated:
@@ -658,12 +707,13 @@ class PipelineController:
             try:
                 # 使用任务追踪模式
                 if use_tracking:
-                    image = self._generate_image_tracked(scene, characters)
+                    image = self._generate_image_tracked(scene, characters, seed=derive_scene_seed(base_seed, scene_id))
                 else:
                     image = self._image_gen.generate_scene(
                         scene,
                         characters,
-                        style_preset=self.config.video.style
+                        style_preset=self.config.video.style,
+                        seed=derive_scene_seed(base_seed, scene_id)
                     )
 
                 image.save(self.project_path / "images" / f"{scene_id}.png")
@@ -697,7 +747,7 @@ class PipelineController:
         if failed_count > 0:
             logger.warning(f"图像生成阶段: {failed_count}/{total} 个场景失败")
 
-    def _generate_image_tracked(self, scene: Dict[str, Any], characters: Dict[str, Any]) -> Any:
+    def _generate_image_tracked(self, scene: Dict[str, Any], characters: Dict[str, Any], seed: Optional[int] = None) -> Any:
         """使用任务追踪生成图像
 
         包装 SceneGenerator 并创建追踪任务。
@@ -729,7 +779,8 @@ class PipelineController:
                 image = self._image_gen.generate_scene(
                     scene,
                     characters,
-                    style_preset=self.config.video.style
+                    style_preset=self.config.video.style,
+                    seed=seed
                 )
 
                 task.complete(output={
@@ -1163,9 +1214,10 @@ class PipelineController:
         return f"{camera_type} camera movement, from {start_frame} to {end_frame}"
 
     def _load_character_references(self, characters: Dict[str, Any]) -> None:
-        """加载角色参考图到 IP-Adapter 管理器
+        """加载角色参考图到参考图管理器
 
         从已生成的角色立绘中加载参考图，用于场景生成时的角色一致性控制。
+        支持 i2l 和 ipadapter 两种角色一致性方法。
 
         Args:
             characters: 角色配置字典
@@ -1174,9 +1226,39 @@ class PipelineController:
             logger.debug("参考图管理器未初始化，跳过加载")
             return
 
+        # 检查角色一致性配置 (支持 i2l 和 ipadapter 两种模式)
+        consistency_config = getattr(self.config.image, 'character_consistency', None)
+        consistency_method = getattr(consistency_config, 'method', 'none') if consistency_config else 'none'
+
+        # 检查 i2l 配置
+        i2l_config = getattr(self.config.image, 'i2l', None)
+        i2l_enabled = i2l_config and getattr(i2l_config, 'enabled', False)
+
+        # 检查 ipadapter 配置
         ipadapter_config = getattr(self.config.image, 'ipadapter', None)
-        if not ipadapter_config or not ipadapter_config.enabled:
-            logger.debug("IP-Adapter 未启用，跳过加载参考图")
+        ipadapter_enabled = ipadapter_config and getattr(ipadapter_config, 'enabled', False)
+
+        # 根据配置决定是否加载参考图
+        should_load = False
+        method_name = "none"
+
+        if consistency_method == "i2l" and i2l_enabled:
+            should_load = True
+            method_name = "i2l"
+        elif consistency_method == "ipadapter" and ipadapter_enabled:
+            should_load = True
+            method_name = "ipadapter"
+        elif i2l_enabled:
+            # 兼容旧配置：如果 i2l 启用但没设置 method
+            should_load = True
+            method_name = "i2l"
+        elif ipadapter_enabled:
+            # 兼容旧配置：如果 ipadapter 启用但没设置 method
+            should_load = True
+            method_name = "ipadapter"
+
+        if not should_load:
+            logger.debug(f"角色一致性未启用 (method={consistency_method}, i2l={i2l_enabled}, ipadapter={ipadapter_enabled})，跳过加载参考图")
             return
 
         # 设置项目目录
@@ -1187,9 +1269,36 @@ class PipelineController:
         loaded = self._reference_manager.load_from_characters_json(characters, char_dir)
 
         if loaded:
-            logger.info(f"已加载 {len(loaded)} 个角色的参考图用于 IP-Adapter")
+            logger.info(f"已加载 {len(loaded)} 个角色的参考图用于 {method_name} 角色一致性")
         else:
             logger.info("未找到可用的角色参考图")
+
+    def _ensure_base_seed(self) -> int:
+        """确保存在基础种子（用于派生每个场景的确定性种子）
+
+        优先级: config.generation.base_seed > state.base_seed > 随机生成
+
+        Returns:
+            基础种子
+        """
+        import random as _random
+
+        # 1. 检查配置文件中的固定种子
+        config_seed = getattr(self.config.generation, 'base_seed', None)
+        if config_seed is not None:
+            self.state.base_seed = config_seed
+            return config_seed
+
+        # 2. 检查已保存的状态（用于恢复运行）
+        if self.state.base_seed is not None:
+            return self.state.base_seed
+
+        # 3. 生成新种子并持久化
+        seed = _random.randint(0, 2**32 - 1)
+        self.state.base_seed = seed
+        self._save_state()
+        logger.info(f"生成项目基础种子: {seed}")
+        return seed
 
     def _save_state(self) -> None:
         """保存状态"""
@@ -1369,6 +1478,10 @@ class PipelineController:
         # 加载角色参考图
         self._load_character_references(characters)
 
+        # 确保基础种子
+        from ..image.scene_generator import derive_scene_seed
+        base_seed = self._ensure_base_seed()
+
         # 处理失效的图像
         for scene_id in list(self.state.get_invalidated_scenes("image")):
             if scene_id not in scene_map:
@@ -1376,7 +1489,7 @@ class PipelineController:
             scene = scene_map[scene_id]
             try:
                 self._report_progress("增量更新", f"重新生成图像: {scene_id}", 0.3)
-                image = self._image_gen.generate_scene(scene, characters, style_preset=self.config.video.style)
+                image = self._image_gen.generate_scene(scene, characters, style_preset=self.config.video.style, seed=derive_scene_seed(base_seed, scene_id))
                 image.save(self.project_path / "images" / f"{scene_id}.png")
                 self.state.mark_scene_completed(scene_id, "image")
                 self.state.clear_invalidation(scene_id, "image")
@@ -1451,6 +1564,10 @@ class PipelineController:
         # 加载角色参考图 (用于 IP-Adapter 角色一致性)
         self._load_character_references(characters)
 
+        # 确保基础种子
+        from ..image.scene_generator import derive_scene_seed
+        base_seed = self._ensure_base_seed()
+
         pending_scenes = [
             s for s in scenes
             if not self.state.is_scene_completed(s["id"], "image")
@@ -1470,7 +1587,8 @@ class PipelineController:
                 image = self._image_gen.generate_scene(
                     scene,
                     characters,
-                    style_preset=self.config.video.style
+                    style_preset=self.config.video.style,
+                    seed=derive_scene_seed(base_seed, scene_id)
                 )
                 image.save(self.project_path / "images" / f"{scene_id}.png")
                 return {"scene_id": scene_id, "success": True, "error": None}
@@ -1602,6 +1720,10 @@ class PipelineController:
         # 加载角色参考图 (用于 IP-Adapter 角色一致性)
         self._load_character_references(characters)
 
+        # 确保基础种子
+        from ..image.scene_generator import derive_scene_seed
+        base_seed = self._ensure_base_seed()
+
         tasks = []
         
         for scene in scenes:
@@ -1611,7 +1733,7 @@ class PipelineController:
                 tasks.append({
                     "task_id": f"image_{scene_id}",
                     "func": self._generate_scene_image,
-                    "args": (scene, characters),
+                    "args": (scene, characters, derive_scene_seed(base_seed, scene_id)),
                 })
             
             if not self.state.is_scene_completed(scene_id, "audio"):
@@ -1654,14 +1776,15 @@ class PipelineController:
         self._save_state()
         self._report_progress("并行生成", "图像和音频生成完成", 1.0)
 
-    def _generate_scene_image(self, scene: Dict[str, Any], characters: Dict[str, Any]) -> Dict[str, Any]:
+    def _generate_scene_image(self, scene: Dict[str, Any], characters: Dict[str, Any], seed: Optional[int] = None) -> Dict[str, Any]:
         """生成单个场景图像 (供并行调用)"""
         scene_id = scene["id"]
         try:
             image = self._image_gen.generate_scene(
                 scene,
                 characters,
-                style_preset=self.config.video.style
+                style_preset=self.config.video.style,
+                seed=seed
             )
             image.save(self.project_path / "images" / f"{scene_id}.png")
             return {"scene_id": scene_id, "type": "image", "success": True, "error": None}

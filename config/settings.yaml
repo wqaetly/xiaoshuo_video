@@ -82,6 +82,8 @@ generation:
   retry_delay: 5
   # 并行执行模式：图像和音频可以同时生成（它们没有依赖关系）
   enable_parallel: true
+  # 基础随机种子 (null = 每次随机生成并持久化, 固定值可复现结果)
+  base_seed: null
 
 # 音频处理配置
 audio:

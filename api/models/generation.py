@@ -59,6 +59,31 @@ class FailedScene(BaseModel):
     time: str
 
 
+class SubTaskStatus(BaseModel):
+    """子任务状态"""
+    id: str  # 场景ID或角色ID
+    name: str  # 显示名称
+    status: str = "pending"  # pending, running, completed, failed, skipped
+    progress: float = 0.0  # 0.0 - 1.0
+    message: str = ""
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error: Optional[str] = None
+
+
+class PhaseProgress(BaseModel):
+    """阶段进度详情"""
+    phase_id: str  # 阶段标识
+    phase_name: str  # 阶段显示名称
+    status: str = "pending"  # pending, running, completed, failed
+    progress: float = 0.0  # 0.0 - 1.0
+    total_items: int = 0  # 该阶段总任务数
+    completed_items: int = 0  # 已完成数
+    failed_items: int = 0  # 失败数
+    current_item: str = ""  # 当前处理项
+    sub_tasks: List[SubTaskStatus] = Field(default_factory=list)  # 子任务列表
+
+
 class GenerationProgress(BaseModel):
     """生成进度信息"""
     phase: str
@@ -84,6 +109,8 @@ class GenerationProgress(BaseModel):
     failed_scenes: List[FailedScene] = Field(default_factory=list)
     # 总错误数
     error_count: int = 0
+    # 各阶段详细进度（新增）
+    phases_detail: List[PhaseProgress] = Field(default_factory=list)
 
 
 class GenerationResult(BaseModel):

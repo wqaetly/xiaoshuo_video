@@ -16,6 +16,8 @@ import {
   Steps,
   List,
   Collapse,
+  Badge,
+  Empty,
 } from 'antd'
 import {
   PlayCircleOutlined,
@@ -29,11 +31,15 @@ import {
   VideoCameraOutlined,
   UserOutlined,
   ExclamationCircleOutlined,
+  ThunderboltOutlined,
+  ClockCircleOutlined,
+  SyncOutlined,
 } from '@ant-design/icons'
 import { generationApi, ServiceStatus, GenerationProgress } from '../api/generation'
-import { createWebSocket, WSMessage } from '../api/websocket'
+import { createWebSocket, WSMessage, MicroTask } from '../api/websocket'
 import { showApiError } from '../api/client'
 import { GENERATION_PHASES, REGENERATE_PHASE } from '../types'
+import SubTaskProgress from '../components/SubTaskProgress'
 
 const { Title, Text } = Typography
 
@@ -45,6 +51,8 @@ function GenerationPage() {
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [wsConnected, setWsConnected] = useState(false)
+  // 微任务状态 - 独立于全局流程的小任务（如单独重新生成某张图片）
+  const [microTasks, setMicroTasks] = useState<MicroTask[]>([])
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -66,6 +74,17 @@ function GenerationPage() {
     }
   }, [projectName])
 
+  // 获取微任务列表
+  const fetchMicroTasks = useCallback(async () => {
+    if (!projectName) return
+    try {
+      const result = await generationApi.getMicroTasks(projectName)
+      setMicroTasks(result.tasks as MicroTask[])
+    } catch (error) {
+      console.error('获取微任务失败', error)
+    }
+  }, [projectName])
+
   // WebSocket 连接处理进度更新
   useEffect(() => {
     if (!projectName) return
@@ -79,10 +98,25 @@ function GenerationPage() {
         setWsConnected(false)
         console.log('[GenerationPage] WebSocket 已断开')
       },
-      onMessage: (message: WSMessage) => {
-        if (message.type === 'progress') {
-          // 收到进度更新时，刷新完整进度数据
+      onMessage: (wsMsg: WSMessage) => {
+        if (wsMsg.type === 'progress') {
+          // 收到全局进度更新时，刷新完整进度数据
           fetchProgress()
+        } else if (wsMsg.type === 'micro_task_update' && wsMsg.micro_task) {
+          // 收到微任务更新时，更新微任务列表
+          const updatedTask = wsMsg.micro_task
+          setMicroTasks(prev => {
+            const index = prev.findIndex(t => t.task_id === updatedTask.task_id)
+            if (index >= 0) {
+              // 更新已有任务
+              const newList = [...prev]
+              newList[index] = updatedTask
+              return newList
+            } else {
+              // 添加新任务
+              return [...prev, updatedTask]
+            }
+          })
         }
       },
     })
@@ -99,7 +133,7 @@ function GenerationPage() {
     const init = async () => {
       setLoading(true)
       // 先快速加载进度数据，服务状态在后台检查（避免超时阻塞页面）
-      await fetchProgress()
+      await Promise.all([fetchProgress(), fetchMicroTasks()])
       setLoading(false)
       // 服务状态异步加载，不阻塞页面显示
       fetchStatus()
@@ -110,11 +144,12 @@ function GenerationPage() {
     const interval = setInterval(() => {
       if (!wsConnected) {
         fetchProgress()
+        fetchMicroTasks()
       }
     }, 5000)
 
     return () => clearInterval(interval)
-  }, [fetchStatus, fetchProgress, wsConnected])
+  }, [fetchStatus, fetchProgress, fetchMicroTasks, wsConnected])
 
   const handleStart = async () => {
     if (!projectName) return
@@ -217,6 +252,54 @@ function GenerationPage() {
     return GENERATION_PHASES[currentPhaseIndex]?.name || '处理中'
   }
 
+  // 获取微任务类型的图标和颜色
+  const getMicroTaskMeta = (taskType: string): { icon: React.ReactNode; color: string; label: string } => {
+    switch (taskType) {
+      case 'image':
+        return { icon: <PictureOutlined />, color: '#52c41a', label: '图像生成' }
+      case 'audio':
+        return { icon: <SoundOutlined />, color: '#722ed1', label: '音频生成' }
+      case 'video':
+        return { icon: <VideoCameraOutlined />, color: '#fa8c16', label: '视频生成' }
+      case 'character':
+        return { icon: <UserOutlined />, color: '#1890ff', label: '角色设计' }
+      case 'regenerate':
+      case 'mixed':
+      default:
+        return { icon: <SyncOutlined />, color: '#eb2f96', label: '增量更新' }
+    }
+  }
+
+  // 微任务状态标签
+  const getMicroTaskStatusTag = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return <Tag icon={<ClockCircleOutlined />} color="default">等待中</Tag>
+      case 'running':
+        return <Tag icon={<SyncOutlined spin />} color="processing">运行中</Tag>
+      case 'completed':
+        return <Tag icon={<CheckCircleOutlined />} color="success">已完成</Tag>
+      case 'failed':
+        return <Tag icon={<CloseCircleOutlined />} color="error">失败</Tag>
+      default:
+        return <Tag color="default">{status}</Tag>
+    }
+  }
+
+  // 过滤显示的微任务（活跃的排前面，最多显示最近10个）
+  const displayMicroTasks = [...microTasks]
+    .sort((a, b) => {
+      // 活跃任务排前面
+      const activeA = ['pending', 'running'].includes(a.status) ? 0 : 1
+      const activeB = ['pending', 'running'].includes(b.status) ? 0 : 1
+      if (activeA !== activeB) return activeA - activeB
+      // 按创建时间倒序
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    })
+    .slice(0, 10)
+
+  const activeMicroTaskCount = microTasks.filter(t => ['pending', 'running'].includes(t.status)).length
+
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
@@ -283,13 +366,13 @@ function GenerationPage() {
                     : progress?.message || '处理中...'
                   }
                 </div>
-                {progress?.current_item_total > 0 && (
+                {(progress?.current_item_total ?? 0) > 0 && progress && (
                   <div style={{ marginTop: 8 }}>
                     <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13 }}>
                       进度: {progress.current_item_index} / {progress.current_item_total}
                     </Text>
                     <Progress
-                      percent={Math.round((progress.phase_progress || 0) * 100)}
+                      percent={Math.round((progress?.phase_progress || 0) * 100)}
                       strokeColor="rgba(255,255,255,0.8)"
                       trailColor="rgba(255,255,255,0.2)"
                       showInfo={false}
@@ -403,6 +486,98 @@ function GenerationPage() {
           )}
         </Row>
       </Card>
+
+      {/* 子任务详细进度 */}
+      {progress?.phases_detail && progress.phases_detail.length > 0 && (
+        <Card title="任务详情" style={{ marginBottom: 24 }}>
+          <SubTaskProgress
+            phasesDetail={progress.phases_detail}
+            currentPhaseId={progress.phase}
+            isRunning={isRunning}
+          />
+        </Card>
+      )}
+
+      {/* 手动任务进度（微任务）- 独立于全局流程 */}
+      {displayMicroTasks.length > 0 && (
+        <Card
+          title={
+            <Space>
+              <ThunderboltOutlined style={{ color: '#eb2f96' }} />
+              <span>手动任务</span>
+              {activeMicroTaskCount > 0 && (
+                <Badge count={activeMicroTaskCount} style={{ backgroundColor: '#eb2f96' }} />
+              )}
+            </Space>
+          }
+          extra={
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              单独触发的重新生成任务（如重新生成某张图片）
+            </Text>
+          }
+          style={{ marginBottom: 24 }}
+        >
+          <List
+            size="small"
+            dataSource={displayMicroTasks}
+            renderItem={(task) => {
+              const meta = getMicroTaskMeta(task.task_type)
+              const isActive = ['pending', 'running'].includes(task.status)
+              return (
+                <List.Item
+                  style={{
+                    background: isActive ? '#fafafa' : undefined,
+                    padding: '12px 16px',
+                    borderRadius: 8,
+                    marginBottom: 8,
+                  }}
+                >
+                  <div style={{ width: '100%' }}>
+                    <Row align="middle" gutter={[16, 8]}>
+                      <Col flex="auto">
+                        <Space>
+                          <span style={{ color: meta.color, fontSize: 16 }}>{meta.icon}</span>
+                          <Text strong>{meta.label}</Text>
+                          {task.target_ids.length > 0 && (
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              {task.target_ids.length === 1
+                                ? task.target_ids[0]
+                                : `${task.target_ids.length} 个场景`
+                              }
+                            </Text>
+                          )}
+                        </Space>
+                      </Col>
+                      <Col>
+                        {getMicroTaskStatusTag(task.status)}
+                      </Col>
+                    </Row>
+                    {isActive && (
+                      <div style={{ marginTop: 8 }}>
+                        <Progress
+                          percent={Math.round(task.progress * 100)}
+                          size="small"
+                          status={task.status === 'running' ? 'active' : undefined}
+                          strokeColor={meta.color}
+                        />
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {task.message}
+                        </Text>
+                      </div>
+                    )}
+                    {task.status === 'failed' && task.error && (
+                      <div style={{ marginTop: 4 }}>
+                        <Text type="danger" style={{ fontSize: 12 }}>{task.error}</Text>
+                      </div>
+                    )}
+                  </div>
+                </List.Item>
+              )
+            }}
+            locale={{ emptyText: <Empty description="暂无手动任务" /> }}
+          />
+        </Card>
+      )}
 
       {/* 失败场景列表 */}
       {hasErrors && progress?.failed_scenes && progress.failed_scenes.length > 0 && (

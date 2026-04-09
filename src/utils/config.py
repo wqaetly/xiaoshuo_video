@@ -166,6 +166,10 @@ class GenerationConfig(BaseModel):
         default=True,
         description="是否启用并行执行（图像和音频同时生成）"
     )
+    base_seed: Optional[int] = Field(
+        default=None,
+        description="基础随机种子 (null=自动生成, 固定值可复现结果)"
+    )
     use_agent_storyboard: bool = Field(
         default=False,
         description="是否使用 Agent 架构生成分镜（实验性功能）"

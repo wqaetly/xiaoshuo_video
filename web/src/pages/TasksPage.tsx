@@ -60,7 +60,7 @@ function TasksPage() {
         const updated = [...prevTasks]
         updated[taskIndex] = {
           ...updated[taskIndex],
-          status: event.status,
+          status: event.status as Task['status'],
           progress: event.progress,
         }
         return updated
@@ -70,7 +70,7 @@ function TasksPage() {
   }, [])
 
   // 使用 SSE Hook
-  const { isConnected, events: sseEvents, connect: connectSSE } = useTaskEvents({
+  const { isConnected, connect: connectSSE } = useTaskEvents({
     autoConnect: true,
     onEvent: handleTaskEvent,
     onConnect: () => {

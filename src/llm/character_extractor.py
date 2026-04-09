@@ -79,6 +79,15 @@ class CharacterExtractor:
             if "sd_negative" not in char:
                 char["sd_negative"] = "ugly, deformed, bad anatomy, bad hands, missing fingers"
 
+            # 过滤 appearance 中的占位符值（如"未明确描述"、"未知"等）
+            appearance = char.get("appearance", {})
+            meaningless = ["未明确", "未描述", "未知", "不详", "不明确", "未提及", "无描述"]
+            for key in ["hair", "eyes", "clothing", "features"]:
+                val = appearance.get(key, "")
+                if isinstance(val, str) and any(p in val for p in meaningless):
+                    appearance[key] = ""
+            char["appearance"] = appearance
+
             validated.append(char)
 
         return validated

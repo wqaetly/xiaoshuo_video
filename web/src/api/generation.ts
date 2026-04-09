@@ -20,6 +20,31 @@ export interface FailedScene {
   time: string
 }
 
+// 子任务状态
+export interface SubTaskStatus {
+  id: string
+  name: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+  progress: number
+  message: string
+  started_at?: string
+  completed_at?: string
+  error?: string
+}
+
+// 阶段详细进度
+export interface PhaseProgress {
+  phase_id: string
+  phase_name: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  progress: number
+  total_items: number
+  completed_items: number
+  failed_items: number
+  current_item: string
+  sub_tasks: SubTaskStatus[]
+}
+
 export interface GenerationProgress {
   phase: string
   phase_index: number
@@ -39,6 +64,8 @@ export interface GenerationProgress {
   completed_tasks: CompletedTasks
   failed_scenes: FailedScene[]
   error_count: number
+  // 各阶段详细进度（新增）
+  phases_detail: PhaseProgress[]
 }
 
 export const generationApi = {
@@ -70,5 +97,30 @@ export const generationApi = {
       project_name: projectName,
     })
   },
+
+  // 获取微任务列表
+  getMicroTasks: (projectName: string, activeOnly: boolean = false): Promise<{
+    tasks: MicroTaskInfo[]
+    count: number
+  }> => {
+    return apiClient.get(`/generation/micro-tasks/${projectName}`, {
+      params: { active_only: activeOnly }
+    })
+  },
+}
+
+// 微任务信息类型
+export interface MicroTaskInfo {
+  task_id: string
+  project_name: string
+  task_type: string
+  target_ids: string[]
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  progress: number
+  message: string
+  created_at: string
+  started_at?: string
+  completed_at?: string
+  error?: string
 }
 

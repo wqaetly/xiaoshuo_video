@@ -1,4 +1,4 @@
-你是一个专业的小说分析师。请分析以下小说片段，提取所有主要角色信息。
+你是一个专业的小说分析师和视觉设计师。请分析以下小说片段，提取所有主要角色信息。
 
 小说内容:
 {novel_text}
@@ -18,30 +18,39 @@
 - sd_prompt: 用于Stable Diffusion的英文外貌提示词
 - sd_negative: Stable Diffusion负面提示词
 
-注意:
-1. 只提取有明确描述的主要角色
-2. 如果某些信息不明确，可以根据上下文合理推断
-3. sd_prompt应该是高质量的英文提示词，包含外貌、服装等细节
-4. 确保JSON格式正确，可以被解析
+重要规则:
+1. 只提取有明确描述或有对白互动的主要角色
+2. **绝对禁止**写"未明确描述"、"未知"、"不详"、"未提及"等占位符！
+   - 如果小说中没有直接描述某个外貌特征，请根据以下信息合理推断：
+     a. 角色的身份、职业、社会地位
+     b. 故事的时代背景和地域设定
+     c. 角色的性格和行为描写
+     d. 小说的整体风格和氛围
+   - 例如：古代武侠小说中的男主角，即使未描述发型，可以推断为"黑色长发束发"；
+     未描述服装，可以推断为"素色长袍"或"青衫"
+3. sd_prompt应该是高质量的英文提示词，包含具体的外貌、发型、服装等视觉细节
+4. sd_prompt 必须包含足够的视觉细节来生成一致的角色形象
+5. 确保JSON格式正确，可以被解析
+6. appearance 中每个字段都必须填写具体的中文描述，用于后续图像生成的角色一致性
 
 输出格式:
 ```json
 [
-  {
+  {{
     "id": "char_001",
     "name": "角色名",
     "aliases": ["别名1", "别名2"],
-    "appearance": {
+    "appearance": {{
       "gender": "male",
-      "age": "25",
-      "hair": "黑色短发",
-      "eyes": "剑眉星目",
-      "clothing": "白色长袍",
-      "features": "身材修长"
-    },
-    "personality": "正直勇敢",
-    "sd_prompt": "1boy, black short hair, sharp eyebrows, wearing white hanfu robe, handsome",
-    "sd_negative": "ugly, deformed, bad anatomy, bad hands"
-  }
+      "age": "约二十五岁",
+      "hair": "黑色长发，以玉冠束起",
+      "eyes": "剑眉星目，目光深邃",
+      "clothing": "月白色云纹广袖长袍，腰系青色丝带",
+      "features": "身材修长挺拔，面如冠玉，气质儒雅出尘"
+    }},
+    "personality": "正直勇敢、洒脱不羁",
+    "sd_prompt": "1boy, long black hair tied with jade crown, sharp eyebrows, deep star-like eyes, wearing moon-white hanfu robe with cloud patterns and wide sleeves, cyan silk belt, tall and slender, handsome jade-like face, elegant scholarly aura, traditional chinese young man, masterpiece, best quality",
+    "sd_negative": "ugly, deformed, bad anatomy, bad hands, missing fingers, extra limbs"
+  }}
 ]
 ```

@@ -31,6 +31,7 @@ class PipelineState:
     # 失效的场景 - 需要重新生成 {task_type: [scene_ids]}
     invalidated_scenes: Dict[str, List[str]] = field(default_factory=dict)
     errors: List[Dict[str, Any]] = field(default_factory=list)
+    base_seed: Optional[int] = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -48,6 +49,7 @@ class PipelineState:
             "completed_scenes": self.completed_scenes,
             "invalidated_scenes": self.invalidated_scenes,
             "errors": self.errors,
+            "base_seed": self.base_seed,
             "created_at": self.created_at,
             "updated_at": datetime.now().isoformat()
         }
@@ -81,6 +83,7 @@ class PipelineState:
             completed_scenes=data.get("completed_scenes", {}),
             invalidated_scenes=data.get("invalidated_scenes", {}),
             errors=data.get("errors", []),
+            base_seed=data.get("base_seed"),
             created_at=data.get("created_at", datetime.now().isoformat()),
             updated_at=data.get("updated_at", datetime.now().isoformat())
         )

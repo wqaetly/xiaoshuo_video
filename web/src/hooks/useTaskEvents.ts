@@ -54,7 +54,8 @@ export interface UseTaskEventsReturn {
   clearEvents: () => void
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE || ''
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const API_BASE = (import.meta as any).env?.VITE_API_BASE || ''
 const SSE_ENDPOINT = `${API_BASE}/api/tasks/events/stream`
 
 export function useTaskEvents(options: UseTaskEventsOptions = {}): UseTaskEventsReturn {

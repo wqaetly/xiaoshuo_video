@@ -4,15 +4,27 @@
 import asyncio
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 from dataclasses import dataclass, field
 
 from src.pipeline import PipelineController
 from src.pipeline.state import Phase, PipelineState
 from src.utils.config import get_config, Config
 from src.utils.logger import get_logger
+from src.utils.file_utils import load_json
 
 logger = get_logger("api.generation_service")
+
+# 阶段定义常量
+PHASE_DEFINITIONS = [
+    {"id": "init", "name": "初始化", "task_type": None},
+    {"id": "analyze", "name": "分析", "task_type": None},
+    {"id": "character_design", "name": "角色设计", "task_type": "character"},
+    {"id": "generate_images", "name": "图像生成", "task_type": "image"},
+    {"id": "generate_audio", "name": "音频生成", "task_type": "audio"},
+    {"id": "generate_video", "name": "视频生成", "task_type": "video"},
+    {"id": "compose", "name": "合成", "task_type": None},
+]
 
 
 @dataclass
@@ -30,16 +42,59 @@ class TaskInfo:
     controller: Optional[PipelineController] = None  # 控制器引用，用于中断任务
 
 
+@dataclass
+class MicroTask:
+    """微任务信息 - 用于单独的手动触发任务（如重新生成单张图片）
+
+    区别于 TaskInfo（全局流程任务），MicroTask 用于表示独立的小任务，
+    每个微任务有自己独立的进度展示，不会影响全局流程的进度条。
+    """
+    task_id: str                              # 唯一任务ID
+    project_name: str                         # 所属项目
+    task_type: str                            # 任务类型: image, audio, character, video
+    target_ids: List[str] = field(default_factory=list)  # 目标ID列表（场景ID或角色ID）
+    status: str = "pending"                   # pending, running, completed, failed
+    progress: float = 0.0                     # 进度 0.0-1.0
+    message: str = ""                         # 当前状态消息
+    created_at: str = ""                      # 创建时间
+    started_at: str = ""                      # 开始时间
+    completed_at: str = ""                    # 完成时间
+    error: str = ""                           # 错误信息
+    thread: Optional[threading.Thread] = None  # 执行线程
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典（用于 API 响应）"""
+        return {
+            "task_id": self.task_id,
+            "project_name": self.project_name,
+            "task_type": self.task_type,
+            "target_ids": self.target_ids,
+            "status": self.status,
+            "progress": self.progress,
+            "message": self.message,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "error": self.error,
+        }
+
+
 class GenerationService:
     """生成控制服务"""
 
     def __init__(self, config: Optional[Config] = None):
         self.config = config or get_config()
         self.projects_dir = Path(self.config.paths.projects_dir)
-        # 存储运行中的任务
+        # 存储运行中的全局任务（每个项目最多一个）
         self.tasks: Dict[str, TaskInfo] = {}
-        # WebSocket 广播回调
+        # 存储微任务（task_id -> MicroTask）
+        self.micro_tasks: Dict[str, MicroTask] = {}
+        # 微任务计数器（用于生成唯一ID）
+        self._micro_task_counter = 0
+        # WebSocket 广播回调 (全局进度)
         self.on_progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None
+        # WebSocket 广播回调 (微任务进度)
+        self.on_micro_task_callback: Optional[Callable[[str, MicroTask], None]] = None
 
     async def check_services(self) -> Dict[str, Dict[str, Any]]:
         """检查本地服务状态（并行检查）"""
@@ -235,6 +290,114 @@ class GenerationService:
 
         return response
 
+    def _build_phases_detail(
+        self,
+        project_name: str,
+        state: Optional[PipelineState],
+        current_phase: str,
+        is_running: bool
+    ) -> List[Dict[str, Any]]:
+        """构建各阶段详细进度"""
+        phases_detail = []
+        current_phase_index = self._get_phase_index(current_phase)
+        project_path = self.projects_dir / project_name
+
+        # 尝试加载场景和角色数据
+        scenes = []
+        characters = []
+        storyboard_file = project_path / "storyboard.json"
+        characters_file = project_path / "characters.json"
+
+        if storyboard_file.exists():
+            try:
+                storyboard = load_json(storyboard_file)
+                scenes = storyboard.get("scenes", [])
+            except Exception:
+                pass
+
+        if characters_file.exists():
+            try:
+                char_data = load_json(characters_file)
+                characters = char_data.get("characters", [])
+            except Exception:
+                pass
+
+        for idx, phase_def in enumerate(PHASE_DEFINITIONS):
+            phase_id = phase_def["id"]
+            phase_name = phase_def["name"]
+            task_type = phase_def["task_type"]
+
+            # 确定阶段状态
+            if idx < current_phase_index:
+                status = "completed"
+            elif idx == current_phase_index:
+                status = "running" if is_running else "pending"
+            else:
+                status = "pending"
+
+            phase_info = {
+                "phase_id": phase_id,
+                "phase_name": phase_name,
+                "status": status,
+                "progress": 1.0 if status == "completed" else 0.0,
+                "total_items": 0,
+                "completed_items": 0,
+                "failed_items": 0,
+                "current_item": "",
+                "sub_tasks": [],
+            }
+
+            # 构建子任务列表
+            if task_type and state:
+                completed_ids = set(state.completed_scenes.get(task_type, []))
+                failed_ids = set()
+                for err in state.errors:
+                    if err.get("phase") == phase_id and err.get("scene_id"):
+                        failed_ids.add(err["scene_id"])
+
+                if task_type == "character":
+                    # 角色设计阶段
+                    items = characters
+                    id_key = "id"
+                    name_key = "name"
+                else:
+                    # 场景相关阶段（image, audio, video）
+                    items = scenes
+                    id_key = "id"
+                    name_key = "id"
+
+                phase_info["total_items"] = len(items)
+
+                for item in items:
+                    item_id = item.get(id_key, "")
+                    item_name = item.get(name_key, item_id)
+
+                    if item_id in failed_ids:
+                        sub_status = "failed"
+                        phase_info["failed_items"] += 1
+                    elif item_id in completed_ids:
+                        sub_status = "completed"
+                        phase_info["completed_items"] += 1
+                    else:
+                        sub_status = "pending"
+
+                    phase_info["sub_tasks"].append({
+                        "id": item_id,
+                        "name": item_name,
+                        "status": sub_status,
+                        "progress": 1.0 if sub_status == "completed" else 0.0,
+                        "message": "",
+                        "error": None,
+                    })
+
+                # 计算阶段进度
+                if phase_info["total_items"] > 0:
+                    phase_info["progress"] = phase_info["completed_items"] / phase_info["total_items"]
+
+            phases_detail.append(phase_info)
+
+        return phases_detail
+
     def get_progress(self, project_name: str) -> Dict[str, Any]:
         """获取项目生成进度"""
         task = self.tasks.get(project_name)
@@ -252,10 +415,19 @@ class GenerationService:
             if state:
                 response = self._build_progress_response(state, None, is_running=False)
                 response["message"] = f"已暂停于 {state.current_phase.value} 阶段"
+                response["phases_detail"] = self._build_phases_detail(
+                    project_name, state, state.current_phase.value, False
+                )
                 return response
-            return self._build_progress_response(None, None, is_running=False)
+            response = self._build_progress_response(None, None, is_running=False)
+            response["phases_detail"] = []
+            return response
 
-        return self._build_progress_response(state, task, is_running=task.is_running)
+        response = self._build_progress_response(state, task, is_running=task.is_running)
+        response["phases_detail"] = self._build_phases_detail(
+            project_name, state, task.current_phase, task.is_running
+        )
+        return response
 
     def start_generation(
         self,
@@ -366,77 +538,104 @@ class GenerationService:
         task = self.tasks.get(project_name)
         return task is not None and task.is_running
 
-    def regenerate_invalidated(self, project_name: str) -> Dict[str, Any]:
-        """重新生成失效的场景资源
+    def regenerate_invalidated(
+        self,
+        project_name: str,
+        scene_ids: Optional[List[str]] = None,
+        resource_types: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """重新生成失效的场景资源（使用微任务系统）
 
         当分镜文本被修改后，相关资源会被标记为失效。
-        此方法仅重新生成这些失效的资源。
+        此方法以微任务形式运行，有独立的进度跟踪。
+
+        Args:
+            project_name: 项目名称
+            scene_ids: 指定的场景ID列表（可选，用于生成微任务描述）
+            resource_types: 指定的资源类型列表（可选，用于生成微任务描述）
 
         Returns:
-            包含处理结果的字典
+            包含处理结果和微任务ID的字典
         """
         # 检查项目是否存在
         project_path = self.projects_dir / project_name
         if not project_path.exists():
             raise ValueError(f"项目不存在: {project_name}")
 
-        # 检查是否已有运行中任务
-        if project_name in self.tasks and self.tasks[project_name].is_running:
-            return {
-                "success": False,
-                "message": "任务已在运行中，请等待完成",
-                "regenerated": {},
-                "errors": [],
-            }
+        # 确定任务类型和目标描述
+        if resource_types:
+            task_type = resource_types[0] if len(resource_types) == 1 else "mixed"
+        else:
+            task_type = "regenerate"
 
-        # 创建任务信息
-        task = TaskInfo(project_name=project_name, phase="regenerate", is_running=True)
-        self.tasks[project_name] = task
+        target_ids = scene_ids or []
 
-        result_data = {
-            "success": True,
-            "message": "",
-            "regenerated": {},
-            "errors": [],
-        }
+        # 生成描述信息
+        if scene_ids and len(scene_ids) == 1:
+            task_desc = f"重新生成 {scene_ids[0]}"
+        elif scene_ids:
+            task_desc = f"重新生成 {len(scene_ids)} 个场景"
+        else:
+            task_desc = "增量更新"
+
+        # 创建微任务
+        micro_task = self.create_micro_task(
+            project_name=project_name,
+            task_type=task_type,
+            target_ids=target_ids,
+            message=f"准备{task_desc}..."
+        )
 
         # 在后台线程运行
-        def run_task():
-            nonlocal result_data
+        def run_micro_task():
             try:
+                self.update_micro_task(
+                    micro_task.task_id,
+                    status="running",
+                    message=f"正在{task_desc}..."
+                )
+
                 controller = PipelineController(project_path, self.config)
 
-                # 设置进度回调
+                # 设置进度回调（通过微任务系统）
                 def on_progress(phase_name: str, message: str, progress: float):
-                    task.current_phase = phase_name
-                    task.message = message
-                    task.progress = progress
-                    if self.on_progress_callback:
-                        self.on_progress_callback(project_name, self.get_progress(project_name))
+                    self.update_micro_task(
+                        micro_task.task_id,
+                        progress=progress,
+                        message=message
+                    )
 
                 controller.on_progress = on_progress
 
                 # 执行增量更新
                 result = controller.run_invalidated_only()
-                result_data.update(result)
 
-                task.message = result.get("message", "增量更新完成")
-                task.progress = 1.0
+                # 完成
+                success = result.get("success", True)
+                self.update_micro_task(
+                    micro_task.task_id,
+                    status="completed" if success else "failed",
+                    progress=1.0,
+                    message=result.get("message", f"{task_desc}完成"),
+                    error="; ".join(result.get("errors", [])) if not success else None
+                )
+
             except Exception as e:
-                logger.error(f"增量更新任务失败: {e}")
-                task.errors.append({"error": str(e)})
-                task.message = f"增量更新失败: {e}"
-                result_data["success"] = False
-                result_data["errors"].append(str(e))
-            finally:
-                task.is_running = False
+                logger.error(f"微任务执行失败 [{micro_task.task_id}]: {e}")
+                self.update_micro_task(
+                    micro_task.task_id,
+                    status="failed",
+                    message=f"{task_desc}失败",
+                    error=str(e)
+                )
 
-        task.thread = threading.Thread(target=run_task, daemon=True)
-        task.thread.start()
+        micro_task.thread = threading.Thread(target=run_micro_task, daemon=True)
+        micro_task.thread.start()
 
         return {
             "success": True,
-            "message": "已启动增量更新任务",
+            "message": f"已创建{task_desc}任务",
+            "task_id": micro_task.task_id,
             "regenerated": {},
             "errors": [],
         }
@@ -479,6 +678,168 @@ class GenerationService:
                 "invalidated_counts": {"image": 0, "audio": 0, "video": 0},
                 "invalidated_scenes": {},
             }
+
+    # ==================== 微任务管理 ====================
+
+    def _generate_micro_task_id(self) -> str:
+        """生成微任务唯一ID"""
+        from datetime import datetime
+        self._micro_task_counter += 1
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        return f"micro_{timestamp}_{self._micro_task_counter}"
+
+    def create_micro_task(
+        self,
+        project_name: str,
+        task_type: str,
+        target_ids: List[str],
+        message: str = ""
+    ) -> MicroTask:
+        """创建微任务
+
+        Args:
+            project_name: 项目名称
+            task_type: 任务类型 (image, audio, character, video)
+            target_ids: 目标ID列表
+            message: 初始消息
+
+        Returns:
+            新创建的 MicroTask 实例
+        """
+        from datetime import datetime
+
+        task_id = self._generate_micro_task_id()
+        micro_task = MicroTask(
+            task_id=task_id,
+            project_name=project_name,
+            task_type=task_type,
+            target_ids=target_ids,
+            status="pending",
+            progress=0.0,
+            message=message or f"准备{task_type}任务...",
+            created_at=datetime.now().isoformat(),
+        )
+        self.micro_tasks[task_id] = micro_task
+        logger.debug(f"创建微任务: {task_id}, 类型={task_type}, 目标={target_ids}")
+
+        # 触发 WebSocket 通知（创建时也发送）
+        if self.on_micro_task_callback:
+            self.on_micro_task_callback(project_name, micro_task)
+
+        return micro_task
+
+    def update_micro_task(
+        self,
+        task_id: str,
+        status: Optional[str] = None,
+        progress: Optional[float] = None,
+        message: Optional[str] = None,
+        error: Optional[str] = None
+    ) -> Optional[MicroTask]:
+        """更新微任务状态并触发 WebSocket 通知
+
+        Args:
+            task_id: 任务ID
+            status: 新状态
+            progress: 新进度
+            message: 新消息
+            error: 错误信息
+
+        Returns:
+            更新后的 MicroTask，如果不存在返回 None
+        """
+        from datetime import datetime
+
+        micro_task = self.micro_tasks.get(task_id)
+        if not micro_task:
+            logger.warning(f"微任务不存在: {task_id}")
+            return None
+
+        if status is not None:
+            micro_task.status = status
+            if status == "running" and not micro_task.started_at:
+                micro_task.started_at = datetime.now().isoformat()
+            elif status in ("completed", "failed"):
+                micro_task.completed_at = datetime.now().isoformat()
+
+        if progress is not None:
+            micro_task.progress = progress
+
+        if message is not None:
+            micro_task.message = message
+
+        if error is not None:
+            micro_task.error = error
+
+        # 触发 WebSocket 通知
+        if self.on_micro_task_callback:
+            self.on_micro_task_callback(micro_task.project_name, micro_task)
+
+        return micro_task
+
+    def get_micro_tasks(self, project_name: str) -> List[Dict[str, Any]]:
+        """获取项目的所有微任务
+
+        Args:
+            project_name: 项目名称
+
+        Returns:
+            微任务列表（字典格式）
+        """
+        return [
+            task.to_dict()
+            for task in self.micro_tasks.values()
+            if task.project_name == project_name
+        ]
+
+    def get_active_micro_tasks(self, project_name: str) -> List[Dict[str, Any]]:
+        """获取项目的活跃微任务（pending 或 running）
+
+        Args:
+            project_name: 项目名称
+
+        Returns:
+            活跃微任务列表
+        """
+        return [
+            task.to_dict()
+            for task in self.micro_tasks.values()
+            if task.project_name == project_name and task.status in ("pending", "running")
+        ]
+
+    def cleanup_micro_tasks(self, project_name: str, max_age_hours: int = 24) -> int:
+        """清理过期的已完成微任务
+
+        Args:
+            project_name: 项目名称
+            max_age_hours: 最大保留时间（小时）
+
+        Returns:
+            清理的任务数量
+        """
+        from datetime import datetime, timedelta
+
+        cutoff = datetime.now() - timedelta(hours=max_age_hours)
+        to_remove = []
+
+        for task_id, task in self.micro_tasks.items():
+            if task.project_name != project_name:
+                continue
+            if task.status in ("completed", "failed") and task.completed_at:
+                try:
+                    completed_time = datetime.fromisoformat(task.completed_at)
+                    if completed_time < cutoff:
+                        to_remove.append(task_id)
+                except ValueError:
+                    pass
+
+        for task_id in to_remove:
+            del self.micro_tasks[task_id]
+
+        if to_remove:
+            logger.debug(f"清理了 {len(to_remove)} 个过期微任务")
+
+        return len(to_remove)
 
 
 # 单例模式

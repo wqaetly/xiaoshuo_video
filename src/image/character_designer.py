@@ -97,6 +97,106 @@ class CharacterReferenceManager:
         """检查角色是否有参考图"""
         return character_id in self._reference_cache
 
+    def create_composite_reference(
+        self,
+        character_ids: List[str],
+        target_width: int = 1280,
+        target_height: int = 720
+    ) -> Optional[Dict[str, Any]]:
+        """创建多角色合成参考图
+
+        将多个角色的参考图水平拼接成一张合成图，用于多角色场景的一致性控制。
+        单角色时直接返回其已有参考图信息。
+
+        Args:
+            character_ids: 要包含的角色 ID 列表
+            target_width: 合成图目标宽度
+            target_height: 合成图目标高度
+
+        Returns:
+            参考图信息字典（与 load_reference_image 返回格式一致），无参考图时返回 None
+        """
+        # 收集所有有参考图的角色
+        ref_images = []
+        ref_char_ids = []
+        for char_id in character_ids:
+            ref_info = self.get_reference_info(char_id)
+            if ref_info:
+                local_path = ref_info.get("local_path")
+                if local_path and Path(local_path).exists():
+                    try:
+                        img = Image.open(local_path)
+                        ref_images.append(img)
+                        ref_char_ids.append(char_id)
+                    except Exception as e:
+                        logger.warning(f"打开角色 {char_id} 参考图失败: {e}")
+
+        if not ref_images:
+            return None
+
+        if len(ref_images) == 1:
+            return self.get_reference_info(ref_char_ids[0])
+
+        # 多角色：水平拼接
+        n = len(ref_images)
+        cell_width = target_width // n
+        cell_height = target_height
+
+        composite = Image.new("RGB", (target_width, target_height), (255, 255, 255))
+
+        for i, img in enumerate(ref_images):
+            # 按比例缩放到单元格内
+            img_ratio = img.width / img.height
+            cell_ratio = cell_width / cell_height
+
+            if img_ratio > cell_ratio:
+                new_w = cell_width
+                new_h = int(cell_width / img_ratio)
+            else:
+                new_h = cell_height
+                new_w = int(cell_height * img_ratio)
+
+            resized = img.resize((new_w, new_h), Image.LANCZOS)
+
+            # 居中放置
+            x_offset = i * cell_width + (cell_width - new_w) // 2
+            y_offset = (cell_height - new_h) // 2
+            composite.paste(resized, (x_offset, y_offset))
+
+        # 缓存键
+        composite_key = "composite_" + "_".join(sorted(ref_char_ids))
+
+        # 上传到 ComfyUI
+        filename = f"ref_{composite_key}.png"
+        upload_result = self.client.upload_image(
+            image=composite,
+            filename=filename,
+            subfolder="character_refs",
+            overwrite=True
+        )
+
+        comfyui_path = upload_result.get("name", filename)
+        subfolder = upload_result.get("subfolder", "character_refs")
+        if subfolder:
+            comfyui_path = f"{subfolder}/{comfyui_path}"
+
+        # 本地保存
+        local_path = self.get_reference_dir() / f"{composite_key}.png"
+        composite.save(local_path)
+
+        ref_info = {
+            "comfyui_path": comfyui_path,
+            "local_path": local_path,
+            "filename": upload_result.get("name", filename),
+            "subfolder": subfolder,
+            "is_composite": True,
+            "source_characters": ref_char_ids
+        }
+
+        self._reference_cache[composite_key] = ref_info
+        logger.info(f"创建合成参考图: {ref_char_ids} -> {comfyui_path}")
+        return ref_info
+
     def load_from_characters_json(
         self,
         characters: Dict[str, Any],
@@ -113,6 +213,7 @@ class CharacterReferenceManager:
         """
         base_dir = base_dir or self.get_reference_dir()
         loaded = {}
+        logger.debug(f"参考图搜索基础目录: {base_dir}")
 
         for char in characters.get("characters", []):
             char_id = char.get("id")
@@ -126,15 +227,29 @@ class CharacterReferenceManager:
             if "reference_images" in char and char["reference_images"]:
                 ref_paths.extend(char["reference_images"])
 
-            # 2. 尝试默认路径: characters/{char_id}/front.png
-            default_ref = base_dir.parent / char_id / "front.png"
+            # 2. 尝试默认路径: {base_dir}/{char_id}/front.png
+            #    base_dir 通常为 project/characters，生成的参考图在 characters/{char_id}/front.png
+            default_ref = base_dir / char_id / "front.png"
             if default_ref.exists():
                 ref_paths.append(str(default_ref))
 
-            # 3. 尝试 references 目录
-            ref_file = base_dir / f"{char_id}_ref.png"
+            # 3. 尝试 references 子目录
+            ref_file = base_dir / "references" / f"{char_id}_ref.png"
             if ref_file.exists():
                 ref_paths.append(str(ref_file))
+
+            # 4. 尝试直接在 base_dir 下查找
+            ref_file_flat = base_dir / f"{char_id}_ref.png"
+            if ref_file_flat.exists():
+                ref_paths.append(str(ref_file_flat))
+
+            if not ref_paths:
+                logger.warning(f"角色 {char_id} 未找到任何参考图，搜索路径: "
+                             f"{base_dir / char_id / 'front.png'}, "
+                             f"{base_dir / 'references' / f'{char_id}_ref.png'}, "
+                             f"{base_dir / f'{char_id}_ref.png'}")
+            else:
+                logger.debug(f"角色 {char_id} 找到 {len(ref_paths)} 个候选参考图: {ref_paths}")
 
             # 加载第一个有效的参考图
             for ref_path in ref_paths:
@@ -143,11 +258,12 @@ class CharacterReferenceManager:
                     if path.exists():
                         ref_info = self.load_reference_image(char_id, path)
                         loaded[char_id] = ref_info
+                        logger.info(f"角色 {char_id} 参考图加载成功: {path}")
                         break
                 except Exception as e:
-                    logger.warning(f"加载角色 {char_id} 参考图失败: {e}")
+                    logger.warning(f"加载角色 {char_id} 参考图失败 ({ref_path}): {e}")
 
-        logger.info(f"已加载 {len(loaded)} 个角色的参考图")
+        logger.info(f"参考图加载完成: {len(loaded)}/{len(characters.get('characters', []))} 个角色")
         return loaded
 
     def clear_cache(self) -> None:
@@ -210,6 +326,7 @@ class CharacterDesigner:
         logger.info(f"开始生成角色 {char_name} 的参考图...")
 
         results = {}
+        seeds_used = {}
         char_dir = output_dir / char_id
         char_dir.mkdir(parents=True, exist_ok=True)
 
@@ -222,16 +339,24 @@ class CharacterDesigner:
         for view in views:
             try:
                 view_prompt = self._get_view_prompt(base_prompt, view)
-                image = self._generate_single(view_prompt, negative_prompt)
+                image, seed_used = self._generate_single(view_prompt, negative_prompt)
 
                 output_path = char_dir / f"{view}.png"
                 image.save(output_path)
                 results[view] = output_path
+                seeds_used[view] = seed_used
 
-                logger.info(f"  生成 {view} 视图完成")
+                logger.info(f"  生成 {view} 视图完成 (seed: {seed_used})")
             except Exception as e:
                 logger.error(f"  生成 {view} 视图失败: {e}")
                 results[view] = None
+
+        # 保存种子信息用于复现
+        if seeds_used:
+            import json as _json
+            seeds_file = char_dir / "seeds.json"
+            with open(seeds_file, "w", encoding="utf-8") as f:
+                _json.dump(seeds_used, f, indent=2)
 
         # 自动注册 front 视图作为 IP-Adapter 参考图
         if register_reference and "front" in results and results["front"]:
@@ -265,15 +390,21 @@ class CharacterDesigner:
         positive_prompt: str,
         negative_prompt: str,
         width: int = 768,
-        height: int = 1024
-    ) -> Image.Image:
+        height: int = 1024,
+        seed: Optional[int] = None
+    ) -> tuple:
         """生成单张图像
 
         如果有工作流模板，使用 Z-Image-Turbo 工作流；
         否则回退到传统的 CheckpointLoaderSimple 方式（需要对应模型）
+
+        Returns:
+            (PIL.Image, int) - 生成的图像和使用的种子
         """
         import random
         import copy
+
+        actual_seed = seed if seed is not None else random.randint(0, 2**32 - 1)
 
         # 优先使用 Z-Image-Turbo 工作流模板
         if self.workflow_template:
@@ -288,9 +419,9 @@ class CharacterDesigner:
                 workflow["5"]["inputs"]["width"] = width
                 workflow["5"]["inputs"]["height"] = height
 
-            # 设置随机种子
+            # 设置种子
             if "3" in workflow:
-                workflow["3"]["inputs"]["seed"] = random.randint(0, 2**32 - 1)
+                workflow["3"]["inputs"]["seed"] = actual_seed
 
             # 修改文件名前缀
             if "9" in workflow:
@@ -310,7 +441,7 @@ class CharacterDesigner:
                         "positive": ["6", 0],
                         "sampler_name": "euler",
                         "scheduler": "normal",
-                        "seed": random.randint(0, 2**32 - 1),
+                        "seed": actual_seed,
                         "steps": 30
                     }
                 },
@@ -360,7 +491,7 @@ class CharacterDesigner:
 
         images = self.client.execute_workflow(workflow)
         if images:
-            return images[0]
+            return images[0], actual_seed
         else:
             raise RuntimeError("角色图像生成失败")
 

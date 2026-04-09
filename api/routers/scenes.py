@@ -106,12 +106,17 @@ async def regenerate_scenes(
             set(request.resource_types)
         )
 
-    # 触发增量更新
-    result = generation_service.regenerate_invalidated(project_name)
+    # 触发增量更新（传递场景和资源类型信息用于微任务描述）
+    result = generation_service.regenerate_invalidated(
+        project_name,
+        scene_ids=request.scene_ids,
+        resource_types=request.resource_types
+    )
 
     return {
         "success": result.get("success", True),
         "message": result.get("message", "已添加重新生成任务"),
+        "task_id": result.get("task_id"),  # 返回微任务ID
         "scene_ids": request.scene_ids,
         "resource_types": request.resource_types,
     }
@@ -137,12 +142,13 @@ async def sync_changes(project_name: str):
             "invalidated_counts": status.get("invalidated_counts", {}),
         }
 
-    # 触发增量更新
+    # 触发增量更新（作为微任务）
     result = generation_service.regenerate_invalidated(project_name)
 
     return {
         "success": result.get("success", True),
         "message": result.get("message", "已启动同步任务"),
+        "task_id": result.get("task_id"),  # 返回微任务ID
         "invalidated_counts": status.get("invalidated_counts", {}),
     }
 

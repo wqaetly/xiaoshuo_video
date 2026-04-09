@@ -2,6 +2,7 @@
 import json
 import copy
 import random
+import hashlib
 from pathlib import Path
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from PIL import Image
@@ -12,6 +13,21 @@ if TYPE_CHECKING:
     from .character_designer import CharacterReferenceManager
 
 logger = get_logger(__name__)
+
+
+def derive_scene_seed(base_seed: int, scene_id: str) -> int:
+    """从基础种子和场景ID派生确定性种子
+
+    Args:
+        base_seed: 项目级基础种子
+        scene_id: 场景唯一标识符
+
+    Returns:
+        该场景的确定性种子 (0 ~ 2^32-1)
+    """
+    hash_bytes = hashlib.sha256(f"{base_seed}_{scene_id}".encode()).digest()
+    return int.from_bytes(hash_bytes[:4], byteorder='big') % (2**32)
+
 
 # Z-Image-Turbo 工作流模板 (6B参数高效模型，8步生成)
 DEFAULT_SCENE_WORKFLOW = {
@@ -355,40 +371,6 @@ class SceneGenerator:
 
         return "none"
 
-    def _should_use_ipadapter(
-        self,
-        character_ids: List[str],
-        use_ipadapter: Optional[bool]
-    ) -> bool:
-        """判断是否应该使用 IP-Adapter (兼容旧代码)
-
-        Args:
-            character_ids: 场景中的角色 ID 列表
-            use_ipadapter: 用户指定的选项 (None=自动)
-
-        Returns:
-            是否使用 IP-Adapter
-        """
-        return self._get_consistency_method(character_ids, use_ipadapter) == "ipadapter"
-        if not self.ipadapter_config.get("enabled", False):
-            return False
-
-        if not self.ipadapter_workflow:
-            return False
-
-        if not character_ids:
-            return False
-
-        if not self.reference_manager:
-            return False
-
-        # 检查是否有任何角色有参考图
-        for char_id in character_ids:
-            if self.reference_manager.has_reference(char_id):
-                return True
-
-        return False
-
     def _build_positive_prompt(
         self,
         scene: Dict[str, Any],
@@ -400,6 +382,8 @@ class SceneGenerator:
         Z-Image-Turbo 使用 Qwen 词法分析器，对中文（尤其是成语和古诗词）
         做了专门优化，直接使用中文自然语言描述即可。
         同时添加风格前缀以控制整体画面风格。
+
+        角色外貌描述会被加入提示词，以增强角色一致性（配合 i2l/ipadapter 参考图使用效果更佳）。
         """
         visual = scene.get("visual", {})
 
@@ -411,10 +395,28 @@ class SceneGenerator:
         if not description:
             description = "一幅精美的场景画面"
 
-        # 组合风格前缀和场景描述
+        # 获取场景中的角色外貌描述（增强角色一致性）
+        character_ids = visual.get("characters_in_scene", [])
+        character_desc = self._get_character_appearance_desc(character_ids, characters)
+
+        # 补充：如果中文外貌描述太短，追加 sd_prompt 关键词增强角色辨识
+        sd_supplement = ""
+        if len(character_desc) < 10:
+            sd_tags = self._get_character_prompts(character_ids, characters)
+            if sd_tags:
+                sd_supplement = sd_tags
+
+        # 组合：风格前缀 + 角色外貌 + SD补充 + 场景描述
+        parts = []
         if style_prefix:
-            return f"{style_prefix}，{description}"
-        return description
+            parts.append(style_prefix)
+        if character_desc:
+            parts.append(character_desc)
+        if sd_supplement:
+            parts.append(sd_supplement)
+        parts.append(description)
+
+        return "，".join(parts)
 
     def _get_style_prefix_chinese(self, style_preset: str) -> str:
         """获取中文风格前缀（适配 Z-Image-Turbo 的 Qwen 词法分析器）"""
@@ -477,7 +479,7 @@ class SceneGenerator:
         character_ids: List[str],
         characters: Dict[str, Any]
     ) -> str:
-        """获取场景中角色的提示词"""
+        """获取场景中角色的提示词（英文SD标签格式）"""
         char_list = characters.get("characters", [])
         char_map = {c["id"]: c for c in char_list}
 
@@ -490,6 +492,106 @@ class SceneGenerator:
                     prompts.append(sd_prompt)
 
         return ", ".join(prompts)
+
+    def _is_meaningful_field(self, value: str) -> bool:
+        """检查外貌字段是否包含有意义的内容
+
+        过滤掉 LLM 生成的占位符值。
+        """
+        if not value or not value.strip():
+            return False
+
+        meaningless_patterns = [
+            "未明确", "未描述", "未知", "不明确", "不详", "无描述",
+            "未提及", "not specified", "unknown", "not described",
+            "unspecified", "n/a", "none", "无"
+        ]
+
+        value_lower = value.strip().lower()
+        return not any(pattern in value_lower for pattern in meaningless_patterns)
+
+    def _get_character_appearance_desc(
+        self,
+        character_ids: List[str],
+        characters: Dict[str, Any]
+    ) -> str:
+        """获取场景中角色的中文外貌描述（适配 Z-Image-Turbo）
+
+        从角色的 appearance 信息构建中文描述，用于增强角色一致性。
+        优先使用结构化的 appearance 数据，回退到 sd_prompt。
+
+        Args:
+            character_ids: 场景中的角色ID列表
+            characters: 完整的角色配置
+
+        Returns:
+            中文角色外貌描述字符串
+        """
+        char_list = characters.get("characters", [])
+        char_map = {c["id"]: c for c in char_list}
+
+        descriptions = []
+        for char_id in character_ids:
+            if char_id not in char_map:
+                continue
+
+            char = char_map[char_id]
+            char_name = char.get("name", "")
+            appearance = char.get("appearance", {})
+
+            # 构建角色外貌描述（过滤无意义的占位符值）
+            desc_parts = []
+
+            # 性别
+            gender = appearance.get("gender", "")
+            if gender == "male":
+                desc_parts.append("男性")
+            elif gender == "female":
+                desc_parts.append("女性")
+
+            # 发型
+            hair = appearance.get("hair", "")
+            if self._is_meaningful_field(hair):
+                desc_parts.append(hair)
+
+            # 眼睛
+            eyes = appearance.get("eyes", "")
+            if self._is_meaningful_field(eyes):
+                desc_parts.append(eyes)
+
+            # 服装
+            clothing = appearance.get("clothing", "")
+            if self._is_meaningful_field(clothing):
+                desc_parts.append(clothing)
+
+            # 特征
+            features = appearance.get("features", "")
+            if self._is_meaningful_field(features):
+                desc_parts.append(features)
+
+            if len(desc_parts) > 1:
+                # 有实质性的结构化外貌数据（不只是性别）
+                char_desc = "、".join(desc_parts)
+                if char_name:
+                    descriptions.append(f"{char_name}（{char_desc}）")
+                else:
+                    descriptions.append(char_desc)
+            elif char.get("sd_prompt") and char["sd_prompt"] != "character portrait":
+                # 回退：使用 sd_prompt 内容
+                sd = char["sd_prompt"]
+                if char_name:
+                    descriptions.append(f"{char_name}（{sd}）")
+                else:
+                    descriptions.append(sd)
+            elif desc_parts:
+                # 仅有性别信息
+                char_desc = "、".join(desc_parts)
+                if char_name:
+                    descriptions.append(f"{char_name}（{char_desc}）")
+                else:
+                    descriptions.append(char_desc)
+
+        return "，".join(descriptions)
 
     def _get_camera_prompt(self, camera: Dict[str, Any]) -> str:
         """获取镜头相关提示词"""
@@ -526,7 +628,12 @@ class SceneGenerator:
 
         # 设置种子
         if "3" in workflow:
-            workflow["3"]["inputs"]["seed"] = seed if seed is not None else random.randint(0, 2**32 - 1)
+            if seed is not None:
+                workflow["3"]["inputs"]["seed"] = seed
+            else:
+                fallback_seed = random.randint(0, 2**32 - 1)
+                logger.warning(f"未提供种子，使用随机种子: {fallback_seed}")
+                workflow["3"]["inputs"]["seed"] = fallback_seed
 
         # 设置输出文件名
         if "9" in workflow:
@@ -572,7 +679,12 @@ class SceneGenerator:
 
         # 设置种子
         if "3" in workflow:
-            workflow["3"]["inputs"]["seed"] = seed if seed is not None else random.randint(0, 2**32 - 1)
+            if seed is not None:
+                workflow["3"]["inputs"]["seed"] = seed
+            else:
+                fallback_seed = random.randint(0, 2**32 - 1)
+                logger.warning(f"未提供种子，使用随机种子: {fallback_seed}")
+                workflow["3"]["inputs"]["seed"] = fallback_seed
 
         # 设置输出文件名
         if "9" in workflow:
@@ -632,7 +744,12 @@ class SceneGenerator:
 
         # 设置种子 (节点 3: KSampler)
         if "3" in workflow:
-            workflow["3"]["inputs"]["seed"] = seed if seed is not None else random.randint(0, 2**32 - 1)
+            if seed is not None:
+                workflow["3"]["inputs"]["seed"] = seed
+            else:
+                fallback_seed = random.randint(0, 2**32 - 1)
+                logger.warning(f"未提供种子，使用随机种子: {fallback_seed}")
+                workflow["3"]["inputs"]["seed"] = fallback_seed
 
         # 设置输出文件名 (节点 9: SaveImage)
         if "9" in workflow:
@@ -655,6 +772,8 @@ class SceneGenerator:
     ) -> None:
         """注入角色参考图到 i2L 工作流
 
+        多角色场景使用合成参考图，单角色使用原始参考图。
+
         Args:
             workflow: 工作流字典 (会被就地修改)
             character_ids: 角色 ID 列表
@@ -663,16 +782,25 @@ class SceneGenerator:
             logger.warning("参考图管理器未设置，跳过 i2L 参考图注入")
             return
 
-        # 找到第一个有参考图的角色
         ref_info = None
         used_char_id = None
 
-        for char_id in character_ids:
-            ref = self.reference_manager.get_reference_info(char_id)
-            if ref:
-                ref_info = ref
-                used_char_id = char_id
-                break
+        # 多角色场景：尝试创建合成参考图
+        if len(character_ids) > 1:
+            ref_info = self.reference_manager.create_composite_reference(
+                character_ids, target_width=1280, target_height=720
+            )
+            if ref_info:
+                used_char_id = f"composite({len(ref_info.get('source_characters', []))}chars)"
+
+        # 回退：使用第一个有参考图的角色
+        if not ref_info:
+            for char_id in character_ids:
+                ref = self.reference_manager.get_reference_info(char_id)
+                if ref:
+                    ref_info = ref
+                    used_char_id = char_id
+                    break
 
         if not ref_info:
             logger.warning(f"场景角色 {character_ids} 均无参考图，i2L 将使用默认值")
@@ -689,10 +817,9 @@ class SceneGenerator:
         workflow: Dict[str, Any],
         character_ids: List[str]
     ) -> None:
-        """注入角色参考图到工作流
+        """注入角色参考图到 IP-Adapter 工作流
 
-        目前实现: 使用第一个有参考图的角色
-        TODO: 支持多角色参考图 (需要多个 IP-Adapter 节点或图像拼接)
+        多角色场景使用合成参考图，单角色使用原始参考图。
 
         Args:
             workflow: 工作流字典 (会被就地修改)
@@ -702,16 +829,25 @@ class SceneGenerator:
             logger.warning("参考图管理器未设置，跳过参考图注入")
             return
 
-        # 找到第一个有参考图的角色
         ref_info = None
         used_char_id = None
 
-        for char_id in character_ids:
-            ref = self.reference_manager.get_reference_info(char_id)
-            if ref:
-                ref_info = ref
-                used_char_id = char_id
-                break
+        # 多角色场景：尝试创建合成参考图
+        if len(character_ids) > 1:
+            ref_info = self.reference_manager.create_composite_reference(
+                character_ids, target_width=1280, target_height=720
+            )
+            if ref_info:
+                used_char_id = f"composite({len(ref_info.get('source_characters', []))}chars)"
+
+        # 回退：使用第一个有参考图的角色
+        if not ref_info:
+            for char_id in character_ids:
+                ref = self.reference_manager.get_reference_info(char_id)
+                if ref:
+                    ref_info = ref
+                    used_char_id = char_id
+                    break
 
         if not ref_info:
             logger.warning(f"场景角色 {character_ids} 均无参考图，使用默认值")
@@ -719,14 +855,9 @@ class SceneGenerator:
 
         # 更新 LoadImage 节点
         if "102" in workflow:
-            # 使用 ComfyUI 中的文件路径
-            comfyui_path = ref_info.get("comfyui_path", "")
-            # LoadImage 节点只需要文件名（不含路径前缀）
-            # 如果有 subfolder，需要在 LoadImage 的特殊格式中处理
-            filename = ref_info.get("filename", comfyui_path)
-
+            filename = ref_info.get("filename", ref_info.get("comfyui_path", ""))
             workflow["102"]["inputs"]["image"] = filename
-            logger.info(f"注入角色 {used_char_id} 的参考图: {filename}")
+            logger.info(f"IP-Adapter 注入角色 {used_char_id} 的参考图: {filename}")
 
     def generate_batch(
         self,
