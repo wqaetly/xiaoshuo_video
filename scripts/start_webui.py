@@ -1,7 +1,8 @@
 """
 启动 Web UI 服务
 
-优雅地启动后端和前端，确保后端就绪后再启动前端
+优雅地启动后端和前端，确保后端就绪后再启动前端。
+启动前会自动关闭占用相关端口的旧进程，防止端口冲突。
 """
 import subprocess
 import sys
@@ -29,6 +30,61 @@ except ImportError:
             return False
 
 
+def kill_port(port: int) -> bool:
+    """关闭占用指定端口的进程
+
+    Returns:
+        True 如果成功关闭或端口本来就空闲
+    """
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, timeout=5
+        )
+        pids = set()
+        for line in result.stdout.splitlines():
+            # 匹配 LISTENING 状态的端口
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.strip().split()
+                if parts:
+                    pid = parts[-1]
+                    if pid.isdigit() and int(pid) > 0:
+                        pids.add(int(pid))
+
+        if not pids:
+            return True
+
+        for pid in pids:
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True, timeout=5
+                )
+                print(f"       已关闭端口 {port} 上的旧进程 (PID: {pid})")
+            except Exception:
+                pass
+
+        # 等待端口释放
+        time.sleep(1)
+        return True
+
+    except Exception as e:
+        print(f"       [Warning] 检查端口 {port} 失败: {e}")
+        return False
+
+
+def cleanup_old_services():
+    """清理旧服务进程"""
+    print("[0/2] 清理旧服务...")
+
+    # 清理后端 (8000)、前端 (3000)、CosyVoice (50000)
+    for port, name in [(8000, "后端"), (3000, "前端"), (50000, "CosyVoice")]:
+        kill_port(port)
+
+    print("       旧服务已清理")
+    print()
+
+
 def wait_for_service(url: str, name: str, timeout: int = 30) -> bool:
     """等待服务就绪"""
     print(f"       等待 {name} 就绪...", end="", flush=True)
@@ -51,6 +107,9 @@ def main():
     print("     Novel2Video - Web UI")
     print("=" * 40)
     print()
+    
+    # 0. 清理旧服务
+    cleanup_old_services()
     
     # 1. 启动后端
     print("[1/2] 启动 FastAPI 后端...")

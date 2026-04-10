@@ -200,6 +200,33 @@ if !MODEL_OK! equ 1 (
     )
 )
 
+REM Check Wan 2.2 I2V model (for local video generation)
+set WAN_MODEL_OK=0
+if exist "tools\ComfyUI_windows_portable\ComfyUI\models\diffusion_models\wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors" (
+    if exist "tools\ComfyUI_windows_portable\ComfyUI\models\diffusion_models\wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors" (
+        if exist "tools\ComfyUI_windows_portable\ComfyUI\models\text_encoders\umt5_xxl_fp8_e4m3fn_scaled.safetensors" (
+            if exist "tools\ComfyUI_windows_portable\ComfyUI\models\vae\wan_2.1_vae.safetensors" (
+                if exist "tools\ComfyUI_windows_portable\ComfyUI\models\clip_vision\clip_vision_h.safetensors" (
+                    set WAN_MODEL_OK=1
+                )
+            )
+        )
+    )
+)
+if !WAN_MODEL_OK! equ 1 (
+    echo [OK] Wan 2.2 I2V model available
+) else (
+    echo [Warning] Wan 2.2 I2V model not found
+    echo [Info] Downloading Wan 2.2 model ^(~37GB, may take a while^)...
+    .venv\Scripts\python.exe scripts\download_wan21_model.py --auto
+    if !errorlevel! equ 0 (
+        echo [OK] Wan 2.2 model installed
+    ) else (
+        echo [Warning] Model download failed - local video generation unavailable
+        echo          Run manually: python scripts\download_wan21_model.py
+    )
+)
+
 REM Copy default workflow
 if exist "tools\ComfyUI_windows_portable\ComfyUI" (
     if not exist "tools\ComfyUI_windows_portable\ComfyUI\user\default\workflows" (
@@ -338,16 +365,19 @@ if exist "%COMFY_PYTHON%" (
 
 REM Start ComfyUI service
 echo Checking ComfyUI service...
-curl -s -o nul -w "" http://localhost:8188/ >nul 2>&1
-if !errorlevel! neq 0 (
-    echo [Info] Starting ComfyUI service...
-    start /min "ComfyUI" cmd /c "cd /d "%~dp0tools\ComfyUI_windows_portable" && run_nvidia_gpu.bat"
-    echo [Info] Waiting for ComfyUI to start...
-    timeout /t 15 /nobreak >nul
-    echo [OK] ComfyUI service started
-) else (
-    echo [OK] ComfyUI service running
+REM Kill old ComfyUI process on port 8188 first
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8188" ^| findstr "LISTENING"') do (
+    if %%a neq 0 (
+        echo [Info] Closing old ComfyUI process ^(PID: %%a^)...
+        taskkill /F /PID %%a >nul 2>&1
+        timeout /t 2 /nobreak >nul
+    )
 )
+echo [Info] Starting ComfyUI service...
+start /min "ComfyUI" cmd /c "cd /d "%~dp0tools\ComfyUI_windows_portable" && run_nvidia_gpu.bat"
+echo [Info] Waiting for ComfyUI to start...
+timeout /t 15 /nobreak >nul
+echo [OK] ComfyUI service started
 
 :skip_comfyui
 
@@ -407,6 +437,59 @@ if !errorlevel! neq 0 (
 ) else (
     echo [OK] GLM-4 model available
 )
+
+REM ========================================
+REM Step 8.5: Check and start CosyVoice 3
+REM ========================================
+echo.
+echo Checking CosyVoice 3 TTS service...
+
+REM Check if CosyVoice is deployed
+if not exist "tools\CosyVoice\cosyvoice" (
+    echo [Info] CosyVoice 3 not installed, deploying...
+    echo        This may take a while on first run...
+    .venv\Scripts\python.exe scripts\setup_cosyvoice.py --auto
+    if !errorlevel! neq 0 (
+        echo [Warning] CosyVoice 3 deployment failed - TTS unavailable
+        echo          Run manually: python scripts\setup_cosyvoice.py
+        goto skip_cosyvoice
+    )
+) else (
+    echo [OK] CosyVoice 3 installed
+)
+
+REM Check model
+if not exist "tools\CosyVoice\pretrained_models\Fun-CosyVoice3-0.5B" (
+    echo [Info] Downloading CosyVoice 3 model...
+    .venv\Scripts\python.exe scripts\setup_cosyvoice.py --auto
+)
+
+REM Kill old CosyVoice process on port 50000
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":50000" ^| findstr "LISTENING"') do (
+    if %%a neq 0 (
+        echo [Info] Closing old CosyVoice process ^(PID: %%a^)...
+        taskkill /F /PID %%a >nul 2>&1
+        timeout /t 2 /nobreak >nul
+    )
+)
+
+REM Start CosyVoice FastAPI service
+if exist "tools\CosyVoice\.venv\Scripts\python.exe" (
+    echo [Info] Starting CosyVoice 3 service on port 50000...
+    start /min "CosyVoice" cmd /c "cd /d "%~dp0tools\CosyVoice" && .venv\Scripts\python.exe runtime\python\fastapi\server.py --port 50000 --model_dir pretrained_models\Fun-CosyVoice3-0.5B"
+    echo [Info] Waiting for CosyVoice to start...
+    timeout /t 10 /nobreak >nul
+    curl -s -o nul -w "" http://localhost:50000/ >nul 2>&1
+    if !errorlevel! equ 0 (
+        echo [OK] CosyVoice 3 service started
+    ) else (
+        echo [Warning] CosyVoice 3 may still be loading ^(model takes time^)
+    )
+) else (
+    echo [Warning] CosyVoice 3 venv not found - TTS unavailable
+)
+
+:skip_cosyvoice
 
 REM ========================================
 REM Step 9: Start services with Python script

@@ -295,12 +295,19 @@ class GenerationService:
         project_name: str,
         state: Optional[PipelineState],
         current_phase: str,
-        is_running: bool
+        is_running: bool,
+        task: Optional[TaskInfo] = None
     ) -> List[Dict[str, Any]]:
         """构建各阶段详细进度"""
         phases_detail = []
         current_phase_index = self._get_phase_index(current_phase)
         project_path = self.projects_dir / project_name
+
+        # 从运行时任务中解析当前正在处理的项目 ID
+        current_item_id = ""
+        if task and task.message and is_running:
+            parsed = self._parse_progress_message(task.message)
+            current_item_id = parsed["current_item"]  # e.g. "场景 scene_01_003"
 
         # 尝试加载场景和角色数据
         scenes = []
@@ -321,6 +328,14 @@ class GenerationService:
                 characters = char_data.get("characters", [])
             except Exception:
                 pass
+
+        # 构建错误信息映射: {(phase_id, scene_id): error_message}
+        error_messages: Dict[tuple, str] = {}
+        if state:
+            for err in state.errors:
+                key = (err.get("phase", ""), err.get("scene_id", ""))
+                if key[1]:  # 只记录有 scene_id 的错误
+                    error_messages[key] = err.get("message", "未知错误")
 
         for idx, phase_def in enumerate(PHASE_DEFINITIONS):
             phase_id = phase_def["id"]
@@ -378,16 +393,23 @@ class GenerationService:
                     elif item_id in completed_ids:
                         sub_status = "completed"
                         phase_info["completed_items"] += 1
+                    elif status == "running" and current_item_id and item_id in current_item_id:
+                        # 当前正在处理的子任务
+                        sub_status = "running"
+                        phase_info["current_item"] = item_id
                     else:
                         sub_status = "pending"
+
+                    # 获取错误信息
+                    error_msg = error_messages.get((phase_id, item_id))
 
                     phase_info["sub_tasks"].append({
                         "id": item_id,
                         "name": item_name,
                         "status": sub_status,
                         "progress": 1.0 if sub_status == "completed" else 0.0,
-                        "message": "",
-                        "error": None,
+                        "message": "正在处理..." if sub_status == "running" else "",
+                        "error": error_msg,
                     })
 
                 # 计算阶段进度
@@ -416,7 +438,7 @@ class GenerationService:
                 response = self._build_progress_response(state, None, is_running=False)
                 response["message"] = f"已暂停于 {state.current_phase.value} 阶段"
                 response["phases_detail"] = self._build_phases_detail(
-                    project_name, state, state.current_phase.value, False
+                    project_name, state, state.current_phase.value, False, task=None
                 )
                 return response
             response = self._build_progress_response(None, None, is_running=False)
@@ -425,7 +447,7 @@ class GenerationService:
 
         response = self._build_progress_response(state, task, is_running=task.is_running)
         response["phases_detail"] = self._build_phases_detail(
-            project_name, state, task.current_phase, task.is_running
+            project_name, state, task.current_phase, task.is_running, task=task
         )
         return response
 

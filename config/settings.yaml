@@ -18,7 +18,7 @@ video:
   # 本地视频生成配置 (provider: "local" 时使用)
   local:
     workflow: "wan2_i2v.json"
-    model: "wan2.1_i2v_480p_bf16.safetensors"  # 可用 GGUF 量化版本
+    model: "wan2.2_i2v_14B_fp8_moe"  # Wan 2.2 MoE 双专家 FP8 量化版
     video_length: 81          # 默认帧数 (~5秒 @ 16fps)
     fps: 16                   # 输出帧率
     width: 832                # 视频宽度
@@ -31,7 +31,7 @@ local:
   ollama_url: "http://localhost:11434"
   ollama_model: "glm4:9b"  # GLM-4-9B: 优秀的中文理解能力，适合小说分镜解析
   comfyui_url: "http://localhost:8188"
-  cosyvoice_url: "http://localhost:9880"
+  cosyvoice_url: "http://localhost:50000"
 
 # 图像生成配置 (Z-Image-Turbo)
 image:

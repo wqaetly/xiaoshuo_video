@@ -1,23 +1,38 @@
 {
-  "_comment": "Wan 2.1 Image-to-Video 工作流 (480P, 适配 16GB VRAM)",
+  "_comment": "Wan 2.2 Image-to-Video 工作流 (14B MoE, FP8 量化适配 16GB VRAM)",
   "1": {
     "class_type": "UNETLoader",
+    "_meta": { "title": "High Noise Expert" },
     "inputs": {
-      "unet_name": "wan2.1_i2v_480p_bf16.safetensors",
-      "weight_dtype": "default"
+      "unet_name": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "fp8_e4m3fn"
     }
   },
   "2": {
+    "class_type": "UNETLoader",
+    "_meta": { "title": "Low Noise Expert" },
+    "inputs": {
+      "unet_name": "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "fp8_e4m3fn"
+    }
+  },
+  "3": {
     "class_type": "CLIPLoader",
     "inputs": {
       "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
       "type": "wan"
     }
   },
-  "3": {
+  "4": {
     "class_type": "VAELoader",
     "inputs": {
       "vae_name": "wan_2.1_vae.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "CLIPVisionLoader",
+    "inputs": {
+      "clip_name": "clip_vision_h.safetensors"
     }
   },
   "10": {
@@ -29,15 +44,22 @@
   "11": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "clip": ["2", 0],
+      "clip": ["3", 0],
       "text": "camera slowly panning, gentle movement"
     }
   },
   "12": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "clip": ["2", 0],
-      "text": "低质量, 模糊, 失真, 抖动, 噪点"
+      "clip": ["3", 0],
+      "text": "low quality, blurry, distorted, jittery, noisy"
+    }
+  },
+  "15": {
+    "class_type": "CLIPVisionEncode",
+    "inputs": {
+      "clip_vision": ["5", 0],
+      "image": ["10", 0]
     }
   },
   "20": {
@@ -45,7 +67,8 @@
     "inputs": {
       "positive": ["11", 0],
       "negative": ["12", 0],
-      "vae": ["3", 0],
+      "vae": ["4", 0],
+      "clip_vision_output": ["15", 0],
       "start_image": ["10", 0],
       "width": 832,
       "height": 480,
@@ -56,7 +79,7 @@
   "30": {
     "class_type": "KSampler",
     "inputs": {
-      "model": ["1", 0],
+      "model": ["35", 0],
       "positive": ["20", 0],
       "negative": ["20", 1],
       "latent_image": ["20", 2],
@@ -68,10 +91,18 @@
       "denoise": 1.0
     }
   },
+  "35": {
+    "class_type": "WanMoEPatcher",
+    "_meta": { "title": "Wan MoE Expert Patcher" },
+    "inputs": {
+      "high_noise_model": ["1", 0],
+      "low_noise_model": ["2", 0]
+    }
+  },
   "40": {
     "class_type": "VAEDecode",
     "inputs": {
-      "vae": ["3", 0],
+      "vae": ["4", 0],
       "samples": ["30", 0]
     }
   },
@@ -88,4 +119,3 @@
     }
   }
 }
-

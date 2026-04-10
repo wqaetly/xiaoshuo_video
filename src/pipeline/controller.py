@@ -418,7 +418,22 @@ class PipelineController:
         video_provider = getattr(self.config.video, 'provider', 'api')
 
         if video_provider == "local":
-            # 本地视频生成 (Wan 2.1)
+            # 本地视频生成 (Wan 2.1) - 检测模型是否就位
+            from ..utils.model_downloader import check_models_exist, WAN21_MODELS
+            comfyui_models_dir = Path("tools/ComfyUI_windows_portable/ComfyUI/models")
+            if comfyui_models_dir.exists():
+                missing = check_models_exist(comfyui_models_dir, WAN21_MODELS)
+                if missing:
+                    missing_names = [WAN21_MODELS[m]["desc"] for m in missing]
+                    logger.error(
+                        f"Wan 2.2 模型缺失 ({len(missing)} 个)，视频生成将不可用。"
+                        f"请运行: python scripts/download_wan21_model.py"
+                    )
+                    for name in missing_names:
+                        logger.error(f"  缺失: {name}")
+                else:
+                    logger.info("Wan 2.2 模型文件已就绪")
+
             from ..video import WanLocalVideoGenerator
             video_local_config = getattr(self.config.video, 'local', None)
             wan_workflow = None
@@ -433,7 +448,7 @@ class PipelineController:
                 default_video_length=getattr(video_local_config, 'video_length', 81) if video_local_config else 81,
                 default_fps=getattr(video_local_config, 'fps', 16) if video_local_config else 16
             )
-            logger.info("使用本地 Wan 2.1 视频生成")
+            logger.info("使用本地 Wan 2.2 视频生成")
         else:
             # 远端 API 视频生成
             from ..video import create_video_client

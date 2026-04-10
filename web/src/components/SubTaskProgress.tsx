@@ -1,7 +1,7 @@
 /**
  * 子任务进度组件 - 展示各阶段的详细子任务进度
  */
-import { useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   Collapse,
   Progress,
@@ -10,7 +10,6 @@ import {
   Typography,
   Badge,
   Tooltip,
-  List,
   Row,
   Col,
 } from 'antd'
@@ -49,53 +48,84 @@ const StatusIcon = ({ status }: { status: string }) => {
   }
 }
 
-// 状态标签
-const StatusTag = ({ status }: { status: string }) => {
-  const config: Record<string, { color: string; text: string }> = {
-    completed: { color: 'success', text: '完成' },
-    running: { color: 'processing', text: '运行中' },
-    failed: { color: 'error', text: '失败' },
-    skipped: { color: 'default', text: '跳过' },
-    pending: { color: 'default', text: '等待' },
+// 子任务行背景色
+const getSubTaskBg = (status: string): string | undefined => {
+  switch (status) {
+    case 'running':
+      return '#e6f4ff'   // 浅蓝
+    case 'failed':
+      return '#fff2f0'   // 浅红
+    default:
+      return undefined
   }
-  const { color, text } = config[status] || config.pending
-  return <Tag color={color}>{text}</Tag>
+}
+
+// 状态排序权重（running 排最前，pending 排最后）
+const statusOrder: Record<string, number> = {
+  running: 0,
+  failed: 1,
+  pending: 3,
+  completed: 2,
+  skipped: 4,
 }
 
 // 单个子任务项
-const SubTaskItem = ({ task }: { task: SubTaskStatus }) => (
-  <List.Item style={{ padding: '8px 0' }}>
-    <Row align="middle" style={{ width: '100%' }} gutter={12}>
+const SubTaskItem = ({ task, index, total }: { task: SubTaskStatus; index: number; total: number }) => (
+  <div
+    style={{
+      padding: '6px 12px',
+      background: getSubTaskBg(task.status),
+      borderRadius: 6,
+      marginBottom: 4,
+      transition: 'background 0.3s',
+    }}
+  >
+    <Row align="middle" style={{ width: '100%' }} gutter={8}>
       <Col flex="24px">
         <StatusIcon status={task.status} />
       </Col>
-      <Col flex="auto">
-        <Space direction="vertical" size={0} style={{ width: '100%' }}>
-          <Text ellipsis style={{ maxWidth: 200 }}>{task.name}</Text>
-          {task.message && (
-            <Text type="secondary" style={{ fontSize: 12 }}>{task.message}</Text>
-          )}
-          {task.error && (
-            <Tooltip title={task.error}>
-              <Text type="danger" style={{ fontSize: 12 }} ellipsis>
-                {task.error}
-              </Text>
-            </Tooltip>
-          )}
-        </Space>
+      <Col flex="auto" style={{ minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>
+            {index + 1}/{total}
+          </Text>
+          <Text
+            ellipsis
+            style={{
+              fontWeight: task.status === 'running' ? 600 : undefined,
+              color: task.status === 'running' ? '#1890ff' : undefined,
+            }}
+          >
+            {task.name}
+          </Text>
+        </div>
+        {task.status === 'running' && task.message && (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            <LoadingOutlined style={{ marginRight: 4 }} />
+            {task.message}
+          </Text>
+        )}
+        {task.error && (
+          <Tooltip title={task.error}>
+            <Text type="danger" style={{ fontSize: 12 }} ellipsis>
+              {task.error}
+            </Text>
+          </Tooltip>
+        )}
       </Col>
-      <Col flex="60px" style={{ textAlign: 'right' }}>
+      <Col flex="40px" style={{ textAlign: 'right' }}>
         {task.status === 'running' && (
-          <Progress
-            type="circle"
-            percent={Math.round(task.progress * 100)}
-            size={28}
-            strokeWidth={8}
-          />
+          <LoadingOutlined style={{ color: '#1890ff', fontSize: 16 }} spin />
+        )}
+        {task.status === 'completed' && (
+          <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 14 }} />
+        )}
+        {task.status === 'failed' && (
+          <CloseCircleOutlined style={{ color: '#ff4d4f', fontSize: 14 }} />
         )}
       </Col>
     </Row>
-  </List.Item>
+  </div>
 )
 
 // 阶段面板
@@ -103,52 +133,63 @@ const PhasePanel = ({ phase }: { phase: PhaseProgress }) => {
   const { completed_items, total_items, failed_items } = phase
   const progressPercent = total_items > 0 ? Math.round((completed_items / total_items) * 100) : 0
 
+  // 对子任务排序：running > failed > completed > pending
+  const sortedTasks = useMemo(() => {
+    // 保留原始索引以显示序号
+    const indexed = phase.sub_tasks.map((t, i) => ({ task: t, originalIndex: i }))
+    return indexed.sort((a, b) => {
+      const oa = statusOrder[a.task.status] ?? 3
+      const ob = statusOrder[b.task.status] ?? 3
+      if (oa !== ob) return oa - ob
+      return a.originalIndex - b.originalIndex
+    })
+  }, [phase.sub_tasks])
+
   return (
-    <div style={{ padding: '12px 0' }}>
-      <Row align="middle" justify="space-between" style={{ marginBottom: 8 }}>
-        <Col>
-          <Space>
-            <StatusTag status={phase.status} />
-            <Text strong>{phase.phase_name}</Text>
-          </Space>
-        </Col>
+    <div>
+      {/* 阶段进度摘要 */}
+      <Row align="middle" justify="space-between" style={{ marginBottom: 8, padding: '0 4px' }}>
         <Col>
           <Space size="small">
-            {total_items > 0 && (
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {completed_items}/{total_items}
-                {failed_items > 0 && (
-                  <Text type="danger" style={{ marginLeft: 4 }}>
-                    ({failed_items}失败)
-                  </Text>
-                )}
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              {completed_items}/{total_items} 完成
+            </Text>
+            {failed_items > 0 && (
+              <Text type="danger" style={{ fontSize: 13 }}>
+                {failed_items} 失败
               </Text>
             )}
-            <Progress
-              percent={progressPercent}
-              size="small"
-              style={{ width: 80, marginBottom: 0 }}
-              showInfo={false}
-              status={phase.status === 'failed' ? 'exception' : undefined}
-            />
           </Space>
+        </Col>
+        <Col style={{ width: 120 }}>
+          <Progress
+            percent={progressPercent}
+            size="small"
+            status={phase.status === 'failed' ? 'exception' : phase.status === 'running' ? 'active' : undefined}
+          />
         </Col>
       </Row>
 
       {/* 子任务列表 */}
-      {phase.sub_tasks.length > 0 && (
-        <List
-          size="small"
-          dataSource={phase.sub_tasks}
-          renderItem={(task) => <SubTaskItem task={task} />}
+      {sortedTasks.length > 0 && (
+        <div
           style={{
-            maxHeight: 300,
+            maxHeight: 360,
             overflow: 'auto',
-            background: '#fafafa',
             borderRadius: 8,
-            padding: '0 12px',
+            border: '1px solid #f0f0f0',
+            padding: 4,
           }}
-        />
+        >
+          {sortedTasks.map(({ task, originalIndex }) => (
+            <SubTaskItem
+              key={task.id}
+              task={task}
+              index={originalIndex}
+              total={total_items}
+            />
+          ))}
+        </div>
       )}
     </div>
   )
@@ -159,13 +200,29 @@ export default function SubTaskProgress({
   currentPhaseId,
   isRunning,
 }: SubTaskProgressProps) {
-  // 默认展开当前运行的阶段
-  const defaultActiveKey = useMemo(() => {
-    if (currentPhaseId && isRunning) {
-      return [currentPhaseId]
+  // 动态控制展开的面板（运行中的阶段 + 有失败的阶段自动展开）
+  const computeActiveKeys = useMemo(() => {
+    const keys: string[] = []
+    for (const phase of phasesDetail) {
+      if (phase.status === 'running') {
+        keys.push(phase.phase_id)
+      } else if (phase.failed_items > 0) {
+        keys.push(phase.phase_id)
+      }
     }
-    return []
-  }, [currentPhaseId, isRunning])
+    // 如果没有运行中的和失败的，展开最近有数据的阶段
+    if (keys.length === 0 && currentPhaseId) {
+      keys.push(currentPhaseId)
+    }
+    return keys
+  }, [phasesDetail, currentPhaseId])
+
+  const [activeKeys, setActiveKeys] = useState<string[]>(computeActiveKeys)
+
+  // 当运行状态或阶段变化时，自动更新展开
+  useEffect(() => {
+    setActiveKeys(computeActiveKeys)
+  }, [computeActiveKeys])
 
   if (!phasesDetail || phasesDetail.length === 0) {
     return null
@@ -180,27 +237,50 @@ export default function SubTaskProgress({
 
   return (
     <Collapse
-      defaultActiveKey={defaultActiveKey}
+      activeKey={activeKeys}
+      onChange={(keys) => setActiveKeys(keys as string[])}
       expandIcon={({ isActive }) => isActive ? <DownOutlined /> : <RightOutlined />}
       items={phasesWithTasks.map(phase => ({
         key: phase.phase_id,
         label: (
-          <Space>
-            <StatusIcon status={phase.status} />
-            <span>{phase.phase_name}</span>
-            <Badge
-              count={phase.completed_items}
-              showZero
-              style={{ backgroundColor: '#52c41a' }}
-            />
-            {phase.failed_items > 0 && (
-              <Badge count={phase.failed_items} style={{ backgroundColor: '#ff4d4f' }} />
-            )}
-          </Space>
+          <Row align="middle" style={{ width: '100%' }}>
+            <Col flex="auto">
+              <Space>
+                <StatusIcon status={phase.status} />
+                <Text strong={phase.status === 'running'}>
+                  {phase.phase_name}
+                </Text>
+                {phase.total_items > 0 && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {phase.completed_items}/{phase.total_items}
+                  </Text>
+                )}
+              </Space>
+            </Col>
+            <Col>
+              <Space size={4}>
+                {phase.status === 'running' && (
+                  <Tag color="processing" style={{ margin: 0 }}>
+                    <LoadingOutlined style={{ marginRight: 4 }} />运行中
+                  </Tag>
+                )}
+                {phase.status === 'completed' && (
+                  <Badge count={phase.completed_items} showZero style={{ backgroundColor: '#52c41a' }} />
+                )}
+                {phase.failed_items > 0 && (
+                  <Badge count={phase.failed_items} style={{ backgroundColor: '#ff4d4f' }} />
+                )}
+              </Space>
+            </Col>
+          </Row>
         ),
         children: <PhasePanel phase={phase} />,
+        style: phase.status === 'running'
+          ? { background: '#f0f7ff', borderColor: '#91caff' }
+          : phase.failed_items > 0
+            ? { background: '#fff7f5', borderColor: '#ffccc7' }
+            : undefined,
       }))}
     />
   )
 }
-
